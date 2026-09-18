@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { font-family: 'IBM Plex Sans Thai', 'IBM Plex Sans', system-ui, sans-serif; }
+.font-mono, code, kbd, pre { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace; }
+body {
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  background-color: #0a0a17;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(128, 135, 248, 0.16) 1px, transparent 0);
+  background-size: 26px 26px;
+  background-attachment: fixed;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.snap-x-mandatory { scroll-snap-type: x mandatory; }
+.snap-start { scroll-snap-align: start; }
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fade-in-up 0.35s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in-up { animation: none; }
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #31324a; border-radius: 999px; border: 2px solid #0a0a17; }
+::-webkit-scrollbar-thumb:hover { background: #454764; }
+* { scrollbar-color: #31324a transparent; scrollbar-width: thin; }
+input:focus-visible, button:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid #8087f8;
+  outline-offset: 1px;
+}
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); }
+  50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(52, 211, 153, 0); }
+}
+.live-dot { animation: pulse-live 2s ease-in-out infinite; }
