@@ -45,7 +45,7 @@ export function saveCachedDailyHistory(symbol, payload) {
 // จะไม่ยิง Twelve Data ซ้ำอีกเลยไม่ว่าจะเปิด/รีเฟรชหน้ากี่ครั้งก็ตาม (ราคาปิดของวันก่อนหน้าไม่มีทาง
 // เปลี่ยนอยู่แล้ว จึงไม่จำเป็นต้องดึงถี่กว่าวันละครั้ง) ช่วยลดจำนวนคำขอที่ต้องรอคิว rate-limit ลงมาก
 // โดยไม่ต้องแตะโควตา/อัตราคำขอต่อนาทีเลย
-async function getDailyHistory(symbol, tdKey, outputsize) {
+export async function getDailyHistory(symbol, tdKey, outputsize) {
   const cached = loadCachedDailyHistory(symbol);
   const todayStr = new Date().toISOString().slice(0, 10);
   const cachedDateStr = cached?.fetchedAt ? new Date(cached.fetchedAt).toISOString().slice(0, 10) : null;

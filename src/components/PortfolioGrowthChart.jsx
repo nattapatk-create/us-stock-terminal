@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRecharts } from "../hooks/useRecharts.js";
-import { loadTxLedger } from "../api/transactionLedger.js";
+import { loadTxLedger, getDailyHistory } from "../api/transactionLedger.js";
 import { ChartLoadingPlaceholder } from "./ChartLoadingPlaceholder.jsx";
 import { fmtPct } from "../utils/formatters.js";
 import { RefreshCw } from "./icons.jsx";
