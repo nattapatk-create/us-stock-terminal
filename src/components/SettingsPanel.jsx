@@ -111,7 +111,7 @@ export function SettingsPanel({
             ความเร็วในการสแกน ยิ่งกรอกตรงกับ Plan จริงยิ่งใช้โควตาได้เต็มโดยไม่โดนปฏิเสธ
           </div>
           <button
-            onClick={() => { commitKeys(); setShowSettings(false); }}
+            onClick={onSave}
             className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-xs text-white font-medium"
           >
             บันทึก API Keys
