@@ -1,4 +1,6 @@
 import { getApiCallsToday, safeSetItem } from "./priceCache.js";
+import { secureFetch } from "./secureFetch.js";
+import { redactSecrets } from "../utils/redact.js";
 
 /* ============================================================
    QUOTA ENGINE — ตัวจัดสรรโควตาแบบ "หน้าต่างเลื่อน + คิดตาม credit"
@@ -346,10 +348,13 @@ export const PORTFOLIO_EXTRACT_PROMPT = [
 ].join("\n");
 
 export async function extractPortfolioFromImage(base64Data, mediaType, apiKey) {
-  const res = await fetch(`${GEMINI_API_BASE}?key=${encodeURIComponent(apiKey)}`, {
+  // ส่ง key ทาง header (x-goog-api-key) แทน query string `?key=` — URL ของคำขอจึงไม่มี key ติดไปอยู่ใน
+  // DevTools > Network / ประวัติ / log ของตัวกลางใด ๆ (เป็นวิธีเดียวกับ SDK เว็บทางการของ Google)
+  const res = await secureFetch(GEMINI_API_BASE, {
     method: "POST",
     headers: {
-      "content-type": "application/json"
+      "content-type": "application/json",
+      "x-goog-api-key": apiKey
     },
     body: JSON.stringify({
       contents: [
@@ -388,7 +393,7 @@ export async function extractPortfolioFromImage(base64Data, mediaType, apiKey) {
       const errBody = await res.json();
       detail = errBody?.error?.message || "";
     } catch {}
-    throw new Error(`Gemini API error (${res.status}) ${detail}`.trim());
+    throw new Error(redactSecrets(`Gemini API error (${res.status}) ${detail}`.trim()));
   }
 
   const data = await res.json();

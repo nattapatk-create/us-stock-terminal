@@ -1,5 +1,6 @@
 import { PRIORITY, assertDailyBudget, fhQueue, isTransientFhError, providerHeadroom, tdBatchSize, tdQueue } from "./quotaEngine.js";
 import { bumpFhCalls, bumpTdCalls, safeSetItem } from "./priceCache.js";
+import { secureFetch } from "./secureFetch.js";
 import { MIN_BARS_FOR_FULL_INDICATORS, OUTPUTSIZE_BY_INTERVAL } from "../utils/indicators.js";
 import { FH_BASE, TD_BASE } from "../data/appConfig.js";
 
@@ -21,7 +22,7 @@ async function tdRequest(url, { cost = 1, priority = PRIORITY.NORMAL, retries = 
     bumpTdCalls(cost);
     let data = null, res = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
-      res = await fetch(url);
+      res = await secureFetch(url);
       data = await res.json().catch(() => null);
       if (!isTransientTdError(data, res)) break;
       if (attempt === retries) break;
@@ -39,7 +40,7 @@ async function fhRequest(url, { priority = PRIORITY.NORMAL, retries = 1 } = {}) 
     bumpFhCalls();
     let res = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
-      res = await fetch(url);
+      res = await secureFetch(url);
       if (!isTransientFhError(res)) break;
       if (attempt === retries) break;
       fhQueue.penalize(2);

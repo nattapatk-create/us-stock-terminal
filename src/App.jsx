@@ -3,6 +3,7 @@ import { PRIORITY, getQuotaSnapshot, loadStore, saveStore, setFhDailyLimit, setF
 import { CACHE_TTL_MS, getFhCallsToday, getTdCallsToday, isCacheEntryFresh, loadCachedEntry, pruneStorage, saveCachedEntry } from "./api/priceCache.js";
 import { DEFAULT_TIMEFRAME, DEFAULT_WATCHLIST, MAX_SYMBOLS } from "./data/appConfig.js";
 import { deriveQuoteFromSeries, fetchFundamentals, fetchProfile, fetchQuoteBalanced, fetchSeries, fetchSeriesBatch } from "./api/priceSeries.js";
+import { clearApiKeys, hasAnySecret, initApiKeyVault, mergeApiKeys, saveApiKeys, splitSecrets, stripSecrets } from "./api/keyVault.js";
 import { getStockName } from "./utils/formatters.js";
 import { classifyCached } from "./utils/indicators.js";
 import { Briefcase, Download, Grid3x3, PieChart, Radar, Settings, Upload } from "./components/icons.jsx";
@@ -26,6 +27,8 @@ export function App() {
   const [tdKeyDraft, setTdKeyDraft] = useState("");
   const [fhKeyDraft, setFhKeyDraft] = useState("");
   const [geminiKeyDraft, setGeminiKeyDraft] = useState("");
+  // สถานะการเก็บ API key (เข้ารหัสอยู่ไหม / เก็บได้แค่ในหน่วยความจำ) — ใช้แสดงคำเตือนใน SettingsPanel
+  const [vaultInfo, setVaultInfo] = useState({ status: "encrypted", legacyRemains: false });
   const [tdRatePerMin, setTdRatePerMin] = useState(8);
   const [tdRateDraft, setTdRateDraft] = useState("8");
   const [fhRatePerMin, setFhRatePerMin] = useState(60);
@@ -53,16 +56,20 @@ export function App() {
       // กวาดแคชที่หมดอายุทิ้งก่อนเริ่มใช้งาน — กัน localStorage เต็มจนแคชหยุดทำงานเงียบ ๆ
       // (แคชที่พังคือสาเหตุอันดับหนึ่งที่ทำให้โควตา API ถูกเผาทิ้งโดยไม่มีใครสังเกต)
       pruneStorage();
+      // API key ไม่ได้อยู่ใน "us-dash-keys" แล้ว (เหลือแค่ค่าโควตา) — อ่านจาก vault ที่เข้ารหัสแทน
+      // และถ้าเจอ key แบบ plaintext จากเวอร์ชันเก่า จะย้ายเข้า vault ให้อัตโนมัติก่อนอ่านค่าอื่น
+      const vault = await initApiKeyVault();
       const [keys, wl] = await Promise.all([
-        loadStore("us-dash-keys", { td: "", fh: "", gemini: "", tdRate: 8, fhRate: 60, tdDaily: 800, fhDaily: 0 }),
+        loadStore("us-dash-keys", { tdRate: 8, fhRate: 60, tdDaily: 800, fhDaily: 0 }),
         loadStore("us-dash-watchlist", DEFAULT_WATCHLIST),
       ]);
-      setTdKey(keys.td || "");
-      setFhKey(keys.fh || "");
-      setGeminiKey(keys.gemini || "");
-      setTdKeyDraft(keys.td || "");
-      setFhKeyDraft(keys.fh || "");
-      setGeminiKeyDraft(keys.gemini || "");
+      setVaultInfo({ status: vault.status, legacyRemains: vault.legacyRemains });
+      setTdKey(vault.keys.td || "");
+      setFhKey(vault.keys.fh || "");
+      setGeminiKey(vault.keys.gemini || "");
+      setTdKeyDraft(vault.keys.td || "");
+      setFhKeyDraft(vault.keys.fh || "");
+      setGeminiKeyDraft(vault.keys.gemini || "");
       const rate = keys.tdRate || 8;
       setTdRatePerMin(rate);
       setTdRateDraft(String(rate));
@@ -408,7 +415,16 @@ export function App() {
     setTdDailyDraft(String(tdDaily));
     setFhDailyDraft(String(fhDaily));
     setQuota(getQuotaSnapshot());
-    saveStore("us-dash-keys", { td, fh, gemini, tdRate: rate, fhRate, tdDaily, fhDaily });
+    // ค่าโควตา (ไม่ลับ) เก็บใน "us-dash-keys" ส่วน API key เข้ารหัสแล้วเก็บแยกใน vault
+    saveStore("us-dash-keys", { tdRate: rate, fhRate, tdDaily, fhDaily });
+    saveApiKeys({ td, fh, gemini }).then(setVaultInfo);
+  };
+
+  // ลบ API key ทั้งหมดออกจากเบราว์เซอร์นี้ (vault + plaintext เก่า) และล้างค่าที่ค้างในหน้าจอ
+  const clearAllApiKeys = async () => {
+    setTdKey(""); setFhKey(""); setGeminiKey("");
+    setTdKeyDraft(""); setFhKeyDraft(""); setGeminiKeyDraft("");
+    setVaultInfo(await clearApiKeys());
   };
 
   const exportBackup = () => {
@@ -420,7 +436,9 @@ export function App() {
     const data = {
       portfolios: JSON.parse(localStorage.getItem("us-dash-portfolios-v3") || "[]"),
       watchlist: JSON.parse(localStorage.getItem("us-dash-watchlist") || "[]"),
-      keys: JSON.parse(localStorage.getItem("us-dash-keys") || "{}"),
+      // ไฟล์สำรองไม่รวม API key (เป็นไฟล์ plaintext ที่มักถูกส่ง/อัปโหลด/sync ต่อ) — ต้องกรอก key ใหม่หลังนำเข้า
+      // ฟิลด์ชื่อ "keys" ยังคงไว้เพื่อให้ไฟล์สำรองเก่า/ใหม่นำเข้าข้ามรุ่นกันได้ (ตอนนี้มีแต่ค่าโควตา)
+      keys: stripSecrets(JSON.parse(localStorage.getItem("us-dash-keys") || "{}")),
       txLedger: JSON.parse(localStorage.getItem("us-dash-tx-ledger-v1") || "[]"),
       portfolioGoals: JSON.parse(localStorage.getItem("us-dash-portfolio-goals-v1") || "{}"),
       cash: JSON.parse(localStorage.getItem("us-dash-cash-v1") || "{\"amount\":0,\"included\":false}"),
@@ -440,7 +458,7 @@ export function App() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const parsed = JSON.parse(event.target.result);
         if (parsed.portfolios) saveStore("us-dash-portfolios-v3", parsed.portfolios);
@@ -461,13 +479,11 @@ export function App() {
           saveStore("us-dash-cash-v1", parsed.cash);
         }
         if (parsed.keys) {
-          saveStore("us-dash-keys", parsed.keys);
-          setTdKey(parsed.keys.td || "");
-          setFhKey(parsed.keys.fh || "");
-          setGeminiKey(parsed.keys.gemini || "");
-          setTdKeyDraft(parsed.keys.td || "");
-          setFhKeyDraft(parsed.keys.fh || "");
-          setGeminiKeyDraft(parsed.keys.gemini || "");
+          // ไฟล์สำรองรุ่นเก่าอาจมี API key แบบ plaintext ติดมา — แยกเข้า vault (เข้ารหัส) ไม่ให้กลับไปอยู่ใน
+          // "us-dash-keys" อีก ต้อง await ให้เสร็จก่อน reload ด้านล่าง ไม่งั้น key จะหายกลางทาง
+          const { secrets, settings } = splitSecrets(parsed.keys);
+          saveStore("us-dash-keys", settings);
+          if (hasAnySecret(secrets)) await mergeApiKeys(secrets);
           const rate = parsed.keys.tdRate || 8;
           setTdRatePerMin(rate);
           setTdRateDraft(String(rate));
@@ -527,7 +543,7 @@ export function App() {
           <button
             onClick={exportBackup}
             className="flex items-center gap-1 text-xs bg-zinc-900/70 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 px-2.5 py-1.5 rounded-lg text-zinc-300 transition-colors"
-            title="ส่งออกข้อมูลสำรอง"
+            title="ส่งออกข้อมูลสำรอง (ไม่รวม API Key)"
           >
             <Download size={13} /> สำรองข้อมูล
           </button>
@@ -553,6 +569,8 @@ export function App() {
           fhRateDraft={fhRateDraft} setFhRateDraft={setFhRateDraft}
           tdDailyDraft={tdDailyDraft} setTdDailyDraft={setTdDailyDraft}
           fhDailyDraft={fhDailyDraft} setFhDailyDraft={setFhDailyDraft}
+          vaultInfo={vaultInfo}
+          onClearKeys={clearAllApiKeys}
           onSave={() => { commitKeys(); setShowSettings(false); }}
         />
       )}
