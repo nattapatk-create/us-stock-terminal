@@ -13,6 +13,7 @@ import { PortfolioView } from "./components/PortfolioView.jsx";
 import { WatchlistTab } from "./components/WatchlistTab.jsx";
 import { SectorRotationView } from "./components/SectorRotationView.jsx";
 import { SP500HeatmapView } from "./components/SP500HeatmapView.jsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 
 export function App() {
   const [symbols, setSymbols] = useState([]);
@@ -612,30 +613,43 @@ export function App() {
           ตอนนี้เปลี่ยนมาให้ "mount ทุกแท็บไว้ตลอด" แล้วใช้ CSS class "hidden" ซ่อนแท็บที่ไม่ได้
           ดูอยู่แทน (display:none) — คอมโพเนนต์และ state ภายในจะยังอยู่ครบ ไม่ถูกทำลาย/สร้างใหม่
           เวลาสลับแท็บไปมา จึงไม่ต้องโหลด/สแกนข้อมูลซ้ำอีกเลย */}
+      {/* ครอบแต่ละแท็บด้วย ErrorBoundary แยกกัน — ถ้าแท็บใดพัง แท็บอื่นยังใช้งานได้ และมีปุ่ม "ลองใหม่"
+          ต้องให้ ErrorBoundary อยู่ "ใต้" div ที่ซ่อน/แสดงตามแท็บ (ไม่ใช่ข้างนอก) ไม่งั้น fallback UI ของ
+          แท็บที่พังจะโผล่ค้างอยู่ทุกแท็บ เพราะมันจะไม่ถูก class "hidden" ซ่อนไปด้วย */}
       <div className="max-w-7xl mx-auto p-4 space-y-4">
         <div className={tab === "portfolio" ? "" : "hidden"}>
-          <PortfolioView tdKey={tdKey} fhKey={fhKey} geminiKey={geminiKey} dataMap={dataMap} loadSymbol={loadSymbol} refreshQuoteOnly={refreshQuoteOnly} />
+          <ErrorBoundary name="พอร์ตลงทุน">
+            <PortfolioView tdKey={tdKey} fhKey={fhKey} geminiKey={geminiKey} dataMap={dataMap} loadSymbol={loadSymbol} refreshQuoteOnly={refreshQuoteOnly} />
+          </ErrorBoundary>
         </div>
 
-        <WatchlistTab
-          active={tab === "watchlist"}
-          tdKey={tdKey} fhKey={fhKey} dataMap={dataMap} loadSymbol={loadSymbol}
-          loadSymbolsBatch={loadSymbolsBatch} loadFundamentalsOnly={loadFundamentalsOnly}
-          symbols={symbols} addSymbol={addSymbol}
-          input={input} setInput={setInput}
-          watchlistSearch={watchlistSearch} setWatchlistSearch={setWatchlistSearch}
-          watchlistTrendFilter={watchlistTrendFilter} setWatchlistTrendFilter={setWatchlistTrendFilter}
-          refreshAll={refreshAll} refreshCooldown={refreshCooldown}
-          filteredWatchlistSymbols={filteredWatchlistSymbols} removeSymbol={removeSymbol}
-          handleRefreshSymbol={handleRefreshSymbol} handleSymbolTimeframeChange={handleSymbolTimeframeChange}
-        />
+        <div className={tab === "watchlist" ? "" : "hidden"}>
+          <ErrorBoundary name="Watchlist & Technical">
+            <WatchlistTab
+              active={tab === "watchlist"}
+              tdKey={tdKey} fhKey={fhKey} dataMap={dataMap} loadSymbol={loadSymbol}
+              loadSymbolsBatch={loadSymbolsBatch} loadFundamentalsOnly={loadFundamentalsOnly}
+              symbols={symbols} addSymbol={addSymbol}
+              input={input} setInput={setInput}
+              watchlistSearch={watchlistSearch} setWatchlistSearch={setWatchlistSearch}
+              watchlistTrendFilter={watchlistTrendFilter} setWatchlistTrendFilter={setWatchlistTrendFilter}
+              refreshAll={refreshAll} refreshCooldown={refreshCooldown}
+              filteredWatchlistSymbols={filteredWatchlistSymbols} removeSymbol={removeSymbol}
+              handleRefreshSymbol={handleRefreshSymbol} handleSymbolTimeframeChange={handleSymbolTimeframeChange}
+            />
+          </ErrorBoundary>
+        </div>
 
         <div className={tab === "sector" ? "" : "hidden"}>
-          <SectorRotationView tdKey={tdKey} />
+          <ErrorBoundary name="Sector Rotation">
+            <SectorRotationView tdKey={tdKey} />
+          </ErrorBoundary>
         </div>
 
         <div className={tab === "heatmap" ? "" : "hidden"}>
-          <SP500HeatmapView tdKey={tdKey} fhKey={fhKey} onAdd={addSymbol} />
+          <ErrorBoundary name="S&P 500 Heatmap">
+            <SP500HeatmapView tdKey={tdKey} fhKey={fhKey} onAdd={addSymbol} />
+          </ErrorBoundary>
         </div>
       </div>
     </div>
