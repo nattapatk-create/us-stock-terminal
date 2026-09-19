@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { TRENDING_UNIVERSE } from "../data/trendingUniverse.js";
 import { GLOBAL_UNIVERSE_TARGET_SIZE, fetchFundamentals, fetchGlobalStockUniverse, fetchProfile, fetchSeriesBatch, pick } from "../api/priceSeries.js";
 import { loadStore, saveStore } from "../api/quotaEngine.js";
-import { NEWS_MIN_COUNT, SCAN_BUFFER, SCAN_CHECKPOINT_KEY, SOCIAL_MIN_MENTIONS, WEEKLY_PICKS_STORE_KEY, WEEKLY_PICK_COUNT, computeInvestorInterest, computeTechnicalSignal, computeTrendScore, fundScanBatchSize, getCapTier, getFundamentalEligibility, getGrowthSignals, getRiskFlags, getWeeklyRotationOrder, techScanBatchSize } from "../api/recommendationScan.js";
+import { NEWS_MIN_COUNT, SCAN_BUFFER, SCAN_CHECKPOINT_KEY, SOCIAL_MIN_MENTIONS, WEEKLY_PICKS_STORE_KEY, WEEKLY_PICK_COUNT, computeInvestorInterest, computeTechnicalSignal, computeTrendScore, fetchCompanyNewsCount7d, fetchSocialSentiment7d, fundScanBatchSize, getCapTier, getFundamentalEligibility, getGrowthSignals, getRiskFlags, getWeeklyRotationOrder, techScanBatchSize } from "../api/recommendationScan.js";
 import { SCAN_OUTPUTSIZE } from "../utils/indicators.js";
 import { DEFAULT_TIMEFRAME } from "../data/appConfig.js";
 import { getCountryMeta } from "../utils/formatters.js";

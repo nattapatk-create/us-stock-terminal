@@ -160,7 +160,7 @@ export function computeTechnicalSignal(bars) {
 
 // ดึงจำนวนข่าวบริษัท (Finnhub /company-news) ในช่วง NEWS_LOOKBACK_DAYS วันย้อนหลัง — ใช้เป็น
 // ตัวแทน "ความสนใจจากนักลงทุน" (ข้อ 3) เพราะระบบนี้ไม่มี API เชื่อมกับโซเชียล/ฟอรัมลงทุนโดยตรง
-async function fetchCompanyNewsCount7d(symbol, fhKey) {
+export async function fetchCompanyNewsCount7d(symbol, fhKey) {
   if (!fhKey) return null;
   const cached = readFhCache("news", symbol);
   if (cached !== undefined) return cached;
@@ -180,7 +180,7 @@ async function fetchCompanyNewsCount7d(symbol, fhKey) {
 // ย้อนหลัง — ใช้ประกอบเป็น "ความสนใจจากนักลงทุน" (ข้อ 1) คู่กับจำนวนข่าว เพราะระบบนี้ไม่มี API
 // เชื่อมโซเชียล/ฟอรัมลงทุนโดยตรง endpoint นี้เป็นของแผนพรีเมียมของ Finnhub — ถ้าบัญชีไม่มีสิทธิ์
 // เข้าถึง (403/ไม่มีข้อมูล) จะคืนค่า null เงียบ ๆ แล้วเกณฑ์ข้อ 1 จะพิจารณาจากจำนวนข่าวอย่างเดียว
-async function fetchSocialSentiment7d(symbol, fhKey) {
+export async function fetchSocialSentiment7d(symbol, fhKey) {
   if (!fhKey) return null;
   const cached = readFhCache("social", symbol);
   if (cached !== undefined) return cached;
