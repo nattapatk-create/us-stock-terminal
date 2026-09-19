@@ -86,6 +86,81 @@ await test("secureFetch: rethrown error has no key", async () => {
     await assert.rejects(() => secureFetch("https://api.twelvedata.com/quote?symbol=A&apikey=LEAKME123456"), (e) => !/LEAKME123456/.test(e.message + e.stack));
   } finally { globalThis.fetch = orig; }
 });
+/* ---------- งานที่ 5: key ผ่าน header แทน query param ---------- */
+await test("tdKeyRequest/fhKeyRequest: header mode มี key ใน header ไม่ใช่ URL", async () => {
+  const { tdKeyRequest, fhKeyRequest } = await imp("api/authRequest.js");
+  const td = tdKeyRequest("https://api.twelvedata.com/quote?symbol=AAPL", KEYS.td, true);
+  assert.equal(td.url.includes(KEYS.td), false);
+  assert.equal(td.init.headers.Authorization, `apikey ${KEYS.td}`);
+  const fh = fhKeyRequest("https://finnhub.io/api/v1/quote?symbol=AAPL", KEYS.fh, true);
+  assert.equal(fh.url.includes(KEYS.fh), false);
+  assert.equal(fh.init.headers["X-Finnhub-Token"], KEYS.fh);
+});
+await test("tdKeyRequest/fhKeyRequest: query mode (fallback) ใส่ key กลับใน URL เหมือนเดิม", async () => {
+  const { tdKeyRequest, fhKeyRequest } = await imp("api/authRequest.js");
+  const td = tdKeyRequest("https://api.twelvedata.com/quote?symbol=AAPL", KEYS.td, false);
+  assert.equal(td.url, `https://api.twelvedata.com/quote?symbol=AAPL&apikey=${KEYS.td}`);
+  assert.equal(td.init, undefined);
+  const fh = fhKeyRequest("https://finnhub.io/api/v1/quote?symbol=AAPL", KEYS.fh, false);
+  assert.equal(fh.url, `https://finnhub.io/api/v1/quote?symbol=AAPL&token=${KEYS.fh}`);
+});
+await test("tdAuthedFetch: ยิงด้วย header สำเร็จ → ไม่แตะ query URL เลย", async () => {
+  const { tdRequestPair, tdAuthedFetch, __resetHeaderAuthProbeForTests } = await imp("api/authRequest.js");
+  __resetHeaderAuthProbeForTests();
+  const orig = globalThis.fetch;
+  const seenUrls = [];
+  globalThis.fetch = async (u, init) => { seenUrls.push({ u, init }); return { ok: true, status: 200 }; };
+  try {
+    const pair = tdRequestPair("https://api.twelvedata.com/quote?symbol=AAPL", KEYS.td);
+    await tdAuthedFetch(pair.header, pair.query);
+    assert.equal(seenUrls.length, 1);
+    assert.equal(seenUrls[0].u.includes(KEYS.td), false);
+    assert.equal(seenUrls[0].init.headers.Authorization, `apikey ${KEYS.td}`);
+  } finally { globalThis.fetch = orig; }
+});
+await test("tdAuthedFetch: header ถูก CORS ปฏิเสธ (network error) → fallback เป็น query อัตโนมัติ", async () => {
+  const { tdRequestPair, tdAuthedFetch, __resetHeaderAuthProbeForTests } = await imp("api/authRequest.js");
+  __resetHeaderAuthProbeForTests();
+  const orig = globalThis.fetch;
+  const seenUrls = [];
+  globalThis.fetch = async (u, init) => {
+    seenUrls.push({ u, init });
+    if (init?.headers?.Authorization) throw new TypeError("Failed to fetch"); // จำลอง preflight ถูกปฏิเสธ
+    return { ok: true, status: 200 };
+  };
+  try {
+    const pair = tdRequestPair("https://api.twelvedata.com/quote?symbol=AAPL", KEYS.td);
+    const res = await tdAuthedFetch(pair.header, pair.query);
+    assert.equal(res.ok, true);
+    assert.equal(seenUrls.length, 2); // ลอง header ก่อน แล้วค่อย fallback เป็น query
+    assert.equal(seenUrls[0].init.headers.Authorization, `apikey ${KEYS.td}`);
+    assert.equal(seenUrls[1].u.includes(`apikey=${KEYS.td}`), true);
+
+    // คำขอถัดไปควรจำผลไว้แล้วยิง query ตรง ๆ โดยไม่ลอง header อีก (ประหยัดคำขอ)
+    seenUrls.length = 0;
+    const pair2 = tdRequestPair("https://api.twelvedata.com/quote?symbol=MSFT", KEYS.td);
+    await tdAuthedFetch(pair2.header, pair2.query);
+    assert.equal(seenUrls.length, 1);
+    assert.equal(seenUrls[0].u.includes(`apikey=${KEYS.td}`), true);
+  } finally { globalThis.fetch = orig; }
+});
+await test("tdAuthedFetch: เคยยืนยัน header ใช้ได้แล้ว → error จริงครั้งหลังไม่ fallback ซ้ำ", async () => {
+  const { tdRequestPair, tdAuthedFetch, __resetHeaderAuthProbeForTests } = await imp("api/authRequest.js");
+  __resetHeaderAuthProbeForTests();
+  const orig = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return { ok: true, status: 200 }; };
+  try {
+    const pairOk = tdRequestPair("https://api.twelvedata.com/quote?symbol=AAPL", KEYS.td);
+    await tdAuthedFetch(pairOk.header, pairOk.query); // ยืนยันว่า header ใช้ได้แล้ว
+    calls = 0;
+    globalThis.fetch = async () => { calls += 1; throw new TypeError("network down จริง ๆ"); };
+    const pairFail = tdRequestPair("https://api.twelvedata.com/quote?symbol=MSFT", KEYS.td);
+    await assert.rejects(() => tdAuthedFetch(pairFail.header, pairFail.query));
+    assert.equal(calls, 1); // ไม่เสียเวลา fallback ซ้ำเพราะรู้อยู่แล้วว่า header ไม่ใช่ปัญหา
+  } finally { globalThis.fetch = orig; }
+});
+
 await test("scrubSecretsFromLocation removes apikey/token from search and hash", async () => {
   const { scrubSecretsFromLocation } = await imp("utils/redact.js");
   const state = { pathname: "/us-stock-terminal/", search: "?tab=heatmap&apikey=ZZZ&fh=YYY", hash: "#token=QQQ&x=1" };

@@ -1,6 +1,6 @@
 import { PRIORITY, assertDailyBudget, fhQueue, isTransientFhError, providerHeadroom, tdBatchSize, tdQueue } from "./quotaEngine.js";
 import { bumpFhCalls, bumpTdCalls, safeSetItem } from "./priceCache.js";
-import { secureFetch } from "./secureFetch.js";
+import { fhAuthedFetch, fhRequestPair, tdAuthedFetch, tdRequestPair } from "./authRequest.js";
 import { MIN_BARS_FOR_FULL_INDICATORS, OUTPUTSIZE_BY_INTERVAL } from "../utils/indicators.js";
 import { FH_BASE, TD_BASE } from "../data/appConfig.js";
 
@@ -16,13 +16,16 @@ export function isTransientTdError(data, res) {
    - นับ credit ตามจริง (batch = จำนวนสัญลักษณ์)
    - เจอ 429 → สั่งเบรกตัวเองอัตโนมัติ (penalize) แล้ว retry ในคิวเดิม
    ------------------------------------------------------------ */
-async function tdRequest(url, { cost = 1, priority = PRIORITY.NORMAL, retries = 1 } = {}) {
+// รับ "pair" ({ header, query }) จาก tdRequestPair() แทนการรับ url สำเร็จรูปตัวเดียว — ข้างในจะลอง
+// ยิงด้วย header ก่อนเสมอ (ไม่มี key ใน URL) แล้วถอยไปใช้ query string อัตโนมัติเฉพาะตอน header ใช้
+// ไม่ได้จริง ๆ (ดูเหตุผลเต็มใน authRequest.js)
+export async function tdRequest(pair, { cost = 1, priority = PRIORITY.NORMAL, retries = 1 } = {}) {
   assertDailyBudget("td", cost);
   return tdQueue(async () => {
     bumpTdCalls(cost);
     let data = null, res = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
-      res = await secureFetch(url);
+      res = await tdAuthedFetch(pair.header, pair.query);
       data = await res.json().catch(() => null);
       if (!isTransientTdError(data, res)) break;
       if (attempt === retries) break;
@@ -34,13 +37,13 @@ async function tdRequest(url, { cost = 1, priority = PRIORITY.NORMAL, retries = 
   }, { cost, priority });
 }
 
-async function fhRequest(url, { priority = PRIORITY.NORMAL, retries = 1 } = {}) {
+export async function fhRequest(pair, { priority = PRIORITY.NORMAL, retries = 1 } = {}) {
   assertDailyBudget("fh", 1);
   return fhQueue(async () => {
     bumpFhCalls();
     let res = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
-      res = await secureFetch(url);
+      res = await fhAuthedFetch(pair.header, pair.query);
       if (!isTransientFhError(res)) break;
       if (attempt === retries) break;
       fhQueue.penalize(2);
@@ -63,8 +66,8 @@ export function normalizeBars(values) {
 async function rawFetchSeriesBatch(symbols, tdKey, interval, size, priority) {
   const cost = symbols.length;
   const symbolParam = symbols.map(encodeURIComponent).join(",");
-  const url = `${TD_BASE}/time_series?symbol=${symbolParam}&interval=${interval}&outputsize=${size}&apikey=${tdKey}`;
-  const { data } = await tdRequest(url, { cost, priority });
+  const baseUrl = `${TD_BASE}/time_series?symbol=${symbolParam}&interval=${interval}&outputsize=${size}`;
+  const { data } = await tdRequest(tdRequestPair(baseUrl, tdKey), { cost, priority });
   const out = {};
   if (symbols.length === 1) {
     // คำขอสัญลักษณ์เดียว Twelve Data ตอบ {meta, values} ตรง ๆ ไม่ห่อด้วยชื่อสัญลักษณ์
@@ -207,8 +210,8 @@ export function deriveQuoteFromSeries(series) {
 // เก็บ fetchQuote ไว้เป็นเส้นทางสำรองของ "ราคาล่าสุด" ฝั่ง Twelve Data — ตัวจัดเส้นทาง
 // (fetchQuoteBalanced) จะเลือกใช้เมื่อฝั่ง Finnhub ตันหรือไม่มี key เท่านั้น
 export async function fetchQuote(symbol, tdKey, opts = {}) {
-  const url = `${TD_BASE}/quote?symbol=${encodeURIComponent(symbol)}&apikey=${tdKey}`;
-  const { data } = await tdRequest(url, { cost: 1, priority: opts.priority ?? PRIORITY.INTERACTIVE });
+  const baseUrl = `${TD_BASE}/quote?symbol=${encodeURIComponent(symbol)}`;
+  const { data } = await tdRequest(tdRequestPair(baseUrl, tdKey), { cost: 1, priority: opts.priority ?? PRIORITY.INTERACTIVE });
   if (!data || data.status === "error" || !data.close) {
     throw new Error(data?.message || "ดึงราคาล่าสุดจาก Twelve Data ไม่สำเร็จ");
   }
@@ -237,8 +240,8 @@ export async function fetchQuote(symbol, tdKey, opts = {}) {
 // ขณะที่ฝั่ง Twelve Data ควรถูกสงวนไว้ให้ /time_series ซึ่งเป็นงานที่มีแต่ Twelve Data ทำได้
 export const TD_QUOTE_HANDICAP = 0.6; // ถ่วงน้ำหนักฝั่ง Twelve Data ลง เพื่อสงวน credit ไว้ทำแท่งราคา
 export async function fetchFinnhubQuote(symbol, fhKey, opts = {}) {
-  const url = `${FH_BASE}/quote?symbol=${encodeURIComponent(symbol)}&token=${fhKey}`;
-  const { data } = await fhRequest(url, { priority: opts.priority ?? PRIORITY.INTERACTIVE });
+  const baseUrl = `${FH_BASE}/quote?symbol=${encodeURIComponent(symbol)}`;
+  const { data } = await fhRequest(fhRequestPair(baseUrl, fhKey), { priority: opts.priority ?? PRIORITY.INTERACTIVE });
   // Finnhub คืน c=0 เมื่อไม่พบสัญลักษณ์ หรือ error/limit — ถือว่าใช้ไม่ได้ ให้ผู้เรียก fallback ต่อ
   if (data == null || !data.c) throw new Error("ดึงราคาล่าสุดจาก Finnhub ไม่สำเร็จ");
   return {
@@ -322,8 +325,8 @@ export async function fetchFundamentals(symbol, fhKey, opts = {}) {
   const cached = readFhCache("metric", symbol);
   if (cached !== undefined) return cached;
   return fhSingleFlight(`metric:${symbol}`, async () => {
-    const url = `${FH_BASE}/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${fhKey}`;
-    const { data } = await fhRequest(url, { priority: opts.priority ?? PRIORITY.BACKGROUND });
+    const baseUrl = `${FH_BASE}/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all`;
+    const { data } = await fhRequest(fhRequestPair(baseUrl, fhKey), { priority: opts.priority ?? PRIORITY.BACKGROUND });
     const metric = data?.metric || {};
     writeFhCache("metric", symbol, metric);
     return metric;
@@ -335,8 +338,8 @@ export async function fetchProfile(symbol, fhKey, opts = {}) {
   const cached = readFhCache("profile", symbol);
   if (cached !== undefined) return cached;
   return fhSingleFlight(`profile:${symbol}`, async () => {
-    const url = `${FH_BASE}/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${fhKey}`;
-    const { data } = await fhRequest(url, { priority: opts.priority ?? PRIORITY.BACKGROUND });
+    const baseUrl = `${FH_BASE}/stock/profile2?symbol=${encodeURIComponent(symbol)}`;
+    const { data } = await fhRequest(fhRequestPair(baseUrl, fhKey), { priority: opts.priority ?? PRIORITY.BACKGROUND });
     writeFhCache("profile", symbol, data || null);
     return data || null;
   });
@@ -462,7 +465,7 @@ export async function fetchGlobalStockUniverse(tdKey) {
     // คำขอในเพดานต่อนาที จึงส่งเข้าคิวด้วย priority ต่ำสุด (งานเบื้องหลัง) ไม่ให้แย่งคิวงานที่
     // ผู้ใช้กำลังรอดูอยู่ตรงหน้า
     const { data, res } = await tdRequest(
-      `${TD_BASE}/stocks?type=Common%20Stock&apikey=${encodeURIComponent(tdKey)}`,
+      tdRequestPair(`${TD_BASE}/stocks?type=Common%20Stock`, tdKey),
       { cost: 1, priority: PRIORITY.BACKGROUND, retries: 1 }
     );
     if (!res.ok) throw new Error(`Twelve Data /stocks HTTP ${res.status}`);

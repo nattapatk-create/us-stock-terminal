@@ -1,5 +1,6 @@
 import { PRIORITY, fhQueue, tdBatchSize } from "./quotaEngine.js";
-import { fhSingleFlight, pick, readFhCache, writeFhCache } from "./priceSeries.js";
+import { fhRequest, fhSingleFlight, pick, readFhCache, writeFhCache } from "./priceSeries.js";
+import { fhRequestPair } from "./authRequest.js";
 import { TRENDING_UNIVERSE } from "../data/trendingUniverse.js";
 import { FH_BASE } from "../data/appConfig.js";
 
@@ -168,8 +169,8 @@ export async function fetchCompanyNewsCount7d(symbol, fhKey) {
     const to = new Date();
     const from = new Date(to.getTime() - NEWS_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
     const fmt = (d) => d.toISOString().slice(0, 10);
-    const url = `${FH_BASE}/company-news?symbol=${encodeURIComponent(symbol)}&from=${fmt(from)}&to=${fmt(to)}&token=${fhKey}`;
-    const { data } = await fhRequest(url, { priority: PRIORITY.BACKGROUND });
+    const baseUrl = `${FH_BASE}/company-news?symbol=${encodeURIComponent(symbol)}&from=${fmt(from)}&to=${fmt(to)}`;
+    const { data } = await fhRequest(fhRequestPair(baseUrl, fhKey), { priority: PRIORITY.BACKGROUND });
     const count = Array.isArray(data) ? data.length : 0;
     writeFhCache("news", symbol, count);
     return count;
@@ -188,8 +189,8 @@ export async function fetchSocialSentiment7d(symbol, fhKey) {
     const to = new Date();
     const from = new Date(to.getTime() - NEWS_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
     const fmt = (d) => d.toISOString().slice(0, 10);
-    const url = `${FH_BASE}/stock/social-sentiment?symbol=${encodeURIComponent(symbol)}&from=${fmt(from)}&to=${fmt(to)}&token=${fhKey}`;
-    const { data } = await fhRequest(url, { priority: PRIORITY.BACKGROUND });
+    const baseUrl = `${FH_BASE}/stock/social-sentiment?symbol=${encodeURIComponent(symbol)}&from=${fmt(from)}&to=${fmt(to)}`;
+    const { data } = await fhRequest(fhRequestPair(baseUrl, fhKey), { priority: PRIORITY.BACKGROUND });
     const reddit = Array.isArray(data?.reddit) ? data.reddit : [];
     const twitter = Array.isArray(data?.twitter) ? data.twitter : [];
     const sumMentions = (arr) => arr.reduce((s, d) => s + (d?.mention || 0), 0);

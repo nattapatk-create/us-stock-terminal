@@ -4,9 +4,12 @@
    ใช้กัน key หลุดออกไปกับ (1) ข้อความ error / stack trace ที่ถูก log ลง console หรือโชว์ใน UI
    และ (2) URL ของหน้าเว็บ (address bar) ที่ผู้ใช้อาจคัดลอกไปแชร์
 
-   หมายเหตุ: Twelve Data / Finnhub / Gemini รับ key ผ่าน query string (`apikey=`, `token=`, `key=`)
-   ทำให้ URL ของ "คำขอ API" มี key อยู่ในตัว (เห็นได้ใน DevTools > Network) — เลี่ยงไม่ได้ตราบใดที่
-   ยิงจากเบราว์เซอร์ตรง ๆ ดังนั้นสิ่งที่ทำได้คือไม่ให้ URL นั้นรั่วไปอยู่ในที่อื่น (log / error / URL หน้าเว็บ)
+   หมายเหตุ (อัปเดตงานที่ 5): ตอนนี้ Twelve Data / Finnhub ส่ง key ผ่าน HTTP header เป็นค่าเริ่มต้น
+   (ดู src/api/authRequest.js) ไม่ผ่าน query string อีกต่อไป จึงไม่โผล่ใน URL ของคำขอ (DevTools >
+   Network > Headers เท่านั้น ไม่ใช่ Network > URL) ส่วน Gemini ส่งผ่าน header `x-goog-api-key`
+   อยู่แล้วเดิม การ match ด้านล่างยังคงเก็บ QUERY_PARAM_RE ไว้เพราะ (1) มี "query string เป็น
+   fallback" กรณี header ใช้ไม่ได้จริง (เช่นผู้ให้บริการเปลี่ยน CORS policy) และ (2) กันกรณีผู้ใช้
+   เผลอวางลิงก์เก่าที่ยังมี `?apikey=`/`?token=` ติดมา
    ------------------------------------------------------------ */
 
 const REDACTED = "[REDACTED]";
