@@ -1,6 +1,7 @@
 import { getApiCallsToday, safeSetItem } from "./priceCache.js";
 import { secureFetch } from "./secureFetch.js";
 import { redactSecrets } from "../utils/redact.js";
+import { ApiError, ApiErrorKind } from "./apiError.js";
 
 /* ============================================================
    QUOTA ENGINE — ตัวจัดสรรโควตาแบบ "หน้าต่างเลื่อน + คิดตาม credit"
@@ -42,13 +43,19 @@ export function applySafety(limitPerMin) {
 }
 export const PRIORITY = { INTERACTIVE: 0, NORMAL: 5, BACKGROUND: 9 };
 
-export class QuotaExhaustedError extends Error {
+// ขยายจาก ApiError(QUOTA) เพื่อให้ isQuotaExhausted/isRateLimited/isAuthError ฯลฯ ครบชุดเดียวกัน
+// ไม่ว่า error จะมาจากที่นี่ (เช็คโควตาก่อนยิงจริง) หรือจากชั้น tdRequest/fhRequest (provider
+// ปฏิเสธคำขอตรง ๆ) — ผู้เรียกเช็คธงเดียวกันได้เสมอโดยไม่ต้องรู้ว่า error มาจากจุดไหน
+export class QuotaExhaustedError extends ApiError {
   constructor(provider, scope) {
     const name = provider === "td" ? "Twelve Data" : "Finnhub";
-    super(`โควตา ${name} ${scope === "day" ? "รายวัน" : "รายนาที"} หมดแล้ว`);
-    this.provider = provider;
+    const message = `โควตา ${name} ${scope === "day" ? "รายวัน" : "รายนาที"} หมดแล้ว`;
+    super(ApiErrorKind.QUOTA, { provider, detail: message });
+    // ข้อความนี้เจาะจงกว่าข้อความกลางของ ApiErrorKind.QUOTA ใน apiError.js (ระบุ provider + ช่วง
+    // เวลาที่หมดไปด้วย) จึงแทนที่ e.message ทันทีหลัง super() — ธง isQuotaExhausted/isRateLimited/
+    // isAuthError ฯลฯ ที่ ApiError ตั้งไว้แล้วยังใช้ได้ตามปกติ ไม่กระทบ
+    this.message = message;
     this.scope = scope;
-    this.isQuotaExhausted = true;
   }
 }
 

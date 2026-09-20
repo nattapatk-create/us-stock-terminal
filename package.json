@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:keys": "node tests/key-vault.test.mjs"
+    "test:keys": "node tests/key-vault.test.mjs",
+    "test:errors": "node --experimental-loader ./tests/jsx-stub-loader.mjs tests/error-handling.test.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

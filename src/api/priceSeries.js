@@ -3,11 +3,31 @@ import { bumpFhCalls, bumpTdCalls, safeSetItem } from "./priceCache.js";
 import { fhAuthedFetch, fhRequestPair, tdAuthedFetch, tdRequestPair } from "./authRequest.js";
 import { MIN_BARS_FOR_FULL_INDICATORS, OUTPUTSIZE_BY_INTERVAL } from "../utils/indicators.js";
 import { FH_BASE, TD_BASE } from "../data/appConfig.js";
+import { ApiError, ApiErrorKind, describeApiErrorForLog } from "./apiError.js";
 
 export function isTransientTdError(data, res) {
   const msg = (data?.message || "").toLowerCase();
   return res.status === 429 || data?.code === 429 ||
     msg.includes("run out of api credits") || msg.includes("too many requests") || msg.includes("limit");
+}
+
+// อ่าน body เป็น JSON แบบไม่โยน error ทิ้ง — คืน parseError แยกออกมาแทน เพื่อให้ผู้เรียกตัดสินใจ
+// เองว่า response.ok=true แต่ parse ไม่ได้ (data parse error) ต่างจาก response ที่ไม่มี body เลย
+async function readJsonSafe(res) {
+  try {
+    return { data: await res.json(), parseError: null };
+  } catch (parseError) {
+    return { data: null, parseError };
+  }
+}
+
+// Finnhub ใช้ HTTP 403 ทั้งกรณี "ไม่มีสิทธิ์เข้าถึง endpoint นี้" (auth จริง) และกรณี "เกินโควตา
+// ของแผนฟรี" (เอกสารทางการไม่แยกรหัสสถานะต่างกัน ดู isTransientFhError ในquotaEngine.js) จึงต้อง
+// เช็คข้อความใน body เพิ่มก่อนตัดสินว่าเป็น auth error จริง ๆ ไม่ใช่แค่โดน rate limit
+function looksLikeAuthMessage(msg) {
+  const m = (msg || "").toLowerCase();
+  return m.includes("invalid api key") || m.includes("invalid token") ||
+    m.includes("unauthorized") || m.includes("don't have access") || m.includes("access denied");
 }
 
 /* ------------------------------------------------------------
@@ -19,19 +39,49 @@ export function isTransientTdError(data, res) {
 // รับ "pair" ({ header, query }) จาก tdRequestPair() แทนการรับ url สำเร็จรูปตัวเดียว — ข้างในจะลอง
 // ยิงด้วย header ก่อนเสมอ (ไม่มี key ใน URL) แล้วถอยไปใช้ query string อัตโนมัติเฉพาะตอน header ใช้
 // ไม่ได้จริง ๆ (ดูเหตุผลเต็มใน authRequest.js)
+// จัดหมวด error อย่างเป็นระบบก่อน parse/ใช้ JSON เสมอ (ตามเกณฑ์งานวันนี้):
+//   1) เช็ค res.status ก่อน — 401 (และ 403 ของ Twelve Data ซึ่งไม่กำกวมเหมือนของ Finnhub) แปลว่า
+//      key ผิด/หมดสิทธิ์แน่นอน โยน ApiError(AUTH) ทันทีโดยไม่ retry (ลองใหม่ไปก็ได้ผลเดิม)
+//   2) 5xx = ปัญหาฝั่ง provider เอง — ลอง retry ตามจำนวนที่กำหนด แล้วโยน ApiError(SERVER) ถ้ายังไม่หาย
+//   3) 429 หรือ payload ที่บอกว่าชนโควตา (isTransientTdError/isTransientFhError) — ลอง retry
+//      พร้อม penalize ตัวเอง (เหมือนเดิม) แล้วโยน ApiError(RATE_LIMIT) ถ้า retry ครบแล้วยังติด
+//   4) response.ok แต่ body parse เป็น JSON ไม่ได้ — ApiError(PARSE)
+//   5) ที่เหลือ (เช่น 200 ที่ payload มีรูปร่างไม่ตรงคาด) คืน {data, res} ตามเดิม ให้ผู้เรียกที่
+//      รู้ความหมายของ field เฉพาะทาง (fetchQuote, fetchFinnhubQuote ฯลฯ) ตัดสินใจเอง
+// (network error จาก fetch เองไม่ต้องจัดการที่นี่ — tdAuthedFetch/fhAuthedFetch โยน
+// ApiError(NETWORK) ให้แล้วตั้งแต่ชั้น secureFetch.js)
 export async function tdRequest(pair, { cost = 1, priority = PRIORITY.NORMAL, retries = 1 } = {}) {
   assertDailyBudget("td", cost);
   return tdQueue(async () => {
     bumpTdCalls(cost);
-    let data = null, res = null;
+    let data = null, res = null, parseError = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
       res = await tdAuthedFetch(pair.header, pair.query);
-      data = await res.json().catch(() => null);
-      if (!isTransientTdError(data, res)) break;
-      if (attempt === retries) break;
-      tdQueue.penalize(cost);                       // ประมาณเพดานสูงไป → หน่วงตัวเองชั่วคราว
-      bumpTdCalls(cost);                            // ครั้งที่ลองใหม่ก็เสีย credit จริงเช่นกัน
-      await new Promise((r) => setTimeout(r, 1200));
+      ({ data, parseError } = await readJsonSafe(res));
+
+      if (res.status === 401 || res.status === 403) {
+        throw new ApiError(ApiErrorKind.AUTH, { provider: "td", status: res.status, detail: data?.message });
+      }
+      if (res.status >= 500) {
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 1200));
+          continue;
+        }
+        throw new ApiError(ApiErrorKind.SERVER, { provider: "td", status: res.status, detail: data?.message });
+      }
+      if (isTransientTdError(data, res)) {
+        if (attempt === retries) {
+          throw new ApiError(ApiErrorKind.RATE_LIMIT, { provider: "td", status: res.status, detail: data?.message });
+        }
+        tdQueue.penalize(cost);                       // ประมาณเพดานสูงไป → หน่วงตัวเองชั่วคราว
+        bumpTdCalls(cost);                            // ครั้งที่ลองใหม่ก็เสีย credit จริงเช่นกัน
+        await new Promise((r) => setTimeout(r, 1200));
+        continue;
+      }
+      if (parseError) {
+        throw new ApiError(ApiErrorKind.PARSE, { provider: "td", status: res.status, cause: parseError });
+      }
+      break;
     }
     return { data, res };
   }, { cost, priority });
@@ -41,16 +91,39 @@ export async function fhRequest(pair, { priority = PRIORITY.NORMAL, retries = 1 
   assertDailyBudget("fh", 1);
   return fhQueue(async () => {
     bumpFhCalls();
-    let res = null;
+    let res = null, data = null, parseError = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
       res = await fhAuthedFetch(pair.header, pair.query);
-      if (!isTransientFhError(res)) break;
-      if (attempt === retries) break;
-      fhQueue.penalize(2);
-      bumpFhCalls();
-      await new Promise((r) => setTimeout(r, 800));
+      ({ data, parseError } = await readJsonSafe(res));
+
+      if (res.status === 401) {
+        throw new ApiError(ApiErrorKind.AUTH, { provider: "fh", status: res.status, detail: data?.error });
+      }
+      if (res.status >= 500) {
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        throw new ApiError(ApiErrorKind.SERVER, { provider: "fh", status: res.status, detail: data?.error });
+      }
+      if (isTransientFhError(res)) {
+        // 403 ของ Finnhub กำกวม (ดู looksLikeAuthMessage ด้านบน) — เช็คข้อความก่อนเผื่อเป็น auth จริง
+        if (res.status === 403 && looksLikeAuthMessage(data?.error)) {
+          throw new ApiError(ApiErrorKind.AUTH, { provider: "fh", status: res.status, detail: data?.error });
+        }
+        if (attempt === retries) {
+          throw new ApiError(ApiErrorKind.RATE_LIMIT, { provider: "fh", status: res.status, detail: data?.error });
+        }
+        fhQueue.penalize(2);
+        bumpFhCalls();
+        await new Promise((r) => setTimeout(r, 800));
+        continue;
+      }
+      if (parseError) {
+        throw new ApiError(ApiErrorKind.PARSE, { provider: "fh", status: res.status, cause: parseError });
+      }
+      break;
     }
-    const data = await res.json().catch(() => null);
     return { data, res };
   }, { cost: 1, priority });
 }
@@ -283,7 +356,9 @@ export async function fetchQuoteBalanced(symbol, { tdKey, fhKey, fallbackSeries,
       const q = await fetchQuote(symbol, td, { priority });
       return { ...q, source: "twelvedata" };
     } catch (e) {
-      console.warn(`[Quote] ${route.provider} ล้มเหลวสำหรับ ${symbol} → ลองเส้นทางถัดไป:`, e.message);
+      // เก็บ log แบบมีรายละเอียด (สถานะ/ข้อความดิบจาก provider) ไว้ debug — e.message เองที่โชว์
+      // ผู้ใช้ตรง ๆ ที่จุดอื่นเป็นข้อความที่เข้าใจง่ายอยู่แล้วจาก ApiError ไม่ต้องแตะ
+      console.warn(`[Quote] ${route.provider} ล้มเหลวสำหรับ ${symbol} → ลองเส้นทางถัดไป:`, describeApiErrorForLog(e));
     }
   }
   return fromSeries();
@@ -468,7 +543,9 @@ export async function fetchGlobalStockUniverse(tdKey) {
       tdRequestPair(`${TD_BASE}/stocks?type=Common%20Stock`, tdKey),
       { cost: 1, priority: PRIORITY.BACKGROUND, retries: 1 }
     );
-    if (!res.ok) throw new Error(`Twelve Data /stocks HTTP ${res.status}`);
+    // tdRequest จัดการ 401/403/429/5xx/parse error เป็น ApiError ให้แล้ว เหลือแค่กรณี "ok:false"
+    // แบบอื่น ๆ ที่ไม่เข้าเกณฑ์เหล่านั้น (เช่น 400) ให้ครอบเป็น ApiError เหมือนกันเพื่อความสม่ำเสมอ
+    if (!res.ok) throw new ApiError(ApiErrorKind.UNKNOWN, { provider: "td", status: res.status, detail: data?.message });
     const rawList = Array.isArray(data?.data) ? data.data : [];
     if (rawList.length === 0) throw new Error("Twelve Data /stocks คืนรายชื่อว่างเปล่า");
     const diverse = buildDiverseUniverse(rawList, GLOBAL_UNIVERSE_TARGET_SIZE);
@@ -478,7 +555,7 @@ export async function fetchGlobalStockUniverse(tdKey) {
   } catch (e) {
     console.error(
       "[Universe] ดึงรายชื่อหุ้นทั่วโลกจาก Twelve Data ไม่สำเร็จ — ใช้ TRENDING_UNIVERSE (คัดสรรไว้ล่วงหน้า) ไปก่อน",
-      e
+      describeApiErrorForLog(e)
     );
     return null;
   }

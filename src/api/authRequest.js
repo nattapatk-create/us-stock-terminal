@@ -36,18 +36,19 @@ async function requestWithHeaderFallback(provider, buildHeaderReq, buildQueryReq
   if (headerAuthSupported[provider] !== false) {
     try {
       const { url, init } = buildHeaderReq();
-      const res = await secureFetch(url, init);
+      const res = await secureFetch(url, init, provider);
       headerAuthSupported[provider] = true;
       return res;
     } catch (e) {
       // เคยยืนยันแล้วว่า header ใช้ได้จริง (ยิงสำเร็จมาก่อนหน้านี้) → ครั้งนี้คือ error จริง (เน็ตล่ม
       // ฯลฯ) ไม่ใช่ปัญหา CORS ของ header จึงไม่ fallback ซ้ำ ปล่อยให้ error เดิมไหลต่อ
+      // (secureFetch โยนเฉพาะ ApiError(NETWORK) เท่านั้น — HTTP error status ไม่ทำให้ fetch reject)
       if (headerAuthSupported[provider] === true) throw e;
       headerAuthSupported[provider] = false;
     }
   }
   const { url, init } = buildQueryReq();
-  return secureFetch(url, init);
+  return secureFetch(url, init, provider);
 }
 
 export function tdAuthedFetch(buildHeaderReq, buildQueryReq) {
