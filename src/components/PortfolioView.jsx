@@ -8,8 +8,10 @@ import { PortfolioGrowthChart } from "./PortfolioGrowthChart.jsx";
 import { fmtPct, fmtPrice, getStockName } from "../utils/formatters.js";
 import { StockLogo } from "./StockLogo.jsx";
 import { ImportPortfolioModal } from "./ImportPortfolioModal.jsx";
+import { useToast } from "../hooks/useToast.js";
 
 export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiKey, dataMap, loadSymbol, refreshQuoteOnly }) {
+  const toast = useToast();
   const [portfolios, setPortfolios] = useState([]);
   const [activePortId, setActivePortId] = useState("");
   const [newPortName, setNewPortName] = useState("");
@@ -232,7 +234,7 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
 
   const handleImportButtonClick = () => {
     if (!geminiKey || !geminiKey.trim()) {
-      alert("กรุณาตั้งค่า Gemini API Key ก่อน (เมนู ⚙ มุมขวาบน) เพื่อใช้ฟีเจอร์อ่านรูปพอร์ตอัตโนมัติ");
+      toast.warning("กรุณาตั้งค่า Gemini API Key ก่อน (เมนู ⚙ มุมขวาบน) เพื่อใช้ฟีเจอร์อ่านรูปพอร์ตอัตโนมัติ");
       return;
     }
     setShowImportModal(true);
@@ -311,7 +313,7 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
       (r) => r.include && r.symbol && Number.isFinite(r.shares) && r.shares > 0
     );
     if (toApply.length === 0) {
-      alert("ไม่มีรายการที่พร้อมนำเข้า กรุณากรอกจำนวนหุ้นให้ครบทุกแถวก่อนยืนยัน");
+      toast.warning("ไม่มีรายการที่พร้อมนำเข้า กรุณากรอกจำนวนหุ้นให้ครบทุกแถวก่อนยืนยัน");
       return;
     }
     if (missingShares.length > 0) {
@@ -400,8 +402,12 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
     updateActiveItems(updated);
     if (tdKey) toApply.forEach((row) => loadSymbol(row.symbol.toUpperCase().trim(), true));
 
+    const appliedCount = toApply.length - skippedSells.length;
+    if (appliedCount > 0) {
+      toast.success(`นำเข้า ${appliedCount} รายการเข้าพอร์ต "${activePort.name}" แล้ว`);
+    }
     if (skippedSells.length > 0) {
-      alert(`ข้ามรายการขายของ ${skippedSells.join(", ")} เนื่องจากไม่พบหุ้นนี้ในพอร์ต "${activePort.name}"`);
+      toast.warning(`ข้ามรายการขายของ ${skippedSells.join(", ")} เนื่องจากไม่พบหุ้นนี้ในพอร์ต "${activePort.name}"`);
     }
 
     closeImportModal();
@@ -422,11 +428,12 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
     setActivePortId(newPort.id);
     setNewPortName("");
     setShowNewPortInput(false);
+    toast.success(`สร้างพอร์ต "${name}" แล้ว`);
   };
 
   const handleDeletePortfolio = (portId) => {
     if (portfolios.length <= 1) {
-      alert("ไม่สามารถลบพอร์ตทั้งหมดได้ ต้องมีอย่างน้อย 1 พอร์ตในระบบ");
+      toast.warning("ไม่สามารถลบพอร์ตทั้งหมดได้ ต้องมีอย่างน้อย 1 พอร์ตในระบบ");
       return;
     }
     const target = portfolios.find((p) => p.id === portId);
@@ -442,6 +449,7 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
         setPortfolioGoals(nextGoals);
         saveStore("us-dash-portfolio-goals-v1", nextGoals);
       }
+      toast.success(`ลบพอร์ต "${target?.name}" แล้ว`);
     }
   };
 
@@ -513,6 +521,7 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
       }
       const updated = portfolio.filter((item) => item.symbol !== sym);
       updateActiveItems(updated);
+      toast.success(`ลบ ${sym} ออกจากพอร์ต "${activePort.name}" แล้ว`);
     }
   };
 

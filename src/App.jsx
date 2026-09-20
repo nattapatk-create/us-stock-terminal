@@ -5,6 +5,7 @@ import { DEFAULT_TIMEFRAME, DEFAULT_WATCHLIST, MAX_SYMBOLS } from "./data/appCon
 import { deriveQuoteFromSeries, fetchFundamentals, fetchProfile, fetchQuoteBalanced, fetchSeries, fetchSeriesBatch } from "./api/priceSeries.js";
 import { clearApiKeys, hasAnySecret, initApiKeyVault, mergeApiKeys, saveApiKeys, splitSecrets, stripSecrets } from "./api/keyVault.js";
 import { getStockName } from "./utils/formatters.js";
+import { useToast } from "./hooks/useToast.js";
 import { classifyCached } from "./utils/indicators.js";
 import { Briefcase, Download, Grid3x3, PieChart, Radar, Settings, Upload } from "./components/icons.jsx";
 import { QuotaMeter } from "./components/QuotaMeter.jsx";
@@ -16,6 +17,7 @@ import { SP500HeatmapView } from "./components/SP500HeatmapView.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
 
 export function App() {
+  const toast = useToast();
   const [symbols, setSymbols] = useState([]);
   const [dataMap, setDataMap] = useState({});
   const dataMapRef = useRef({});
@@ -350,13 +352,25 @@ export function App() {
   // หรือแก้ไข localStorage key "us-dash-watchlist" โดยพลการเด็ดขาด
   const addSymbol = useCallback((raw) => {
     const s = raw.trim().toUpperCase();
-    if (!s || symbols.includes(s) || symbols.length >= MAX_SYMBOLS) return;
+    if (!s) {
+      toast.warning("กรุณาพิมพ์ชื่อย่อหุ้นก่อน เช่น TSLA, AAPL");
+      return;
+    }
+    if (symbols.includes(s)) {
+      toast.warning(`${s} อยู่ใน Watchlist แล้ว`);
+      return;
+    }
+    if (symbols.length >= MAX_SYMBOLS) {
+      toast.warning(`Watchlist เต็มแล้ว (สูงสุด ${MAX_SYMBOLS} ตัว) กรุณาลบหุ้นบางตัวออกก่อนเพิ่มใหม่`);
+      return;
+    }
     const next = [...symbols, s];
     setSymbols(next);
     saveStore("us-dash-watchlist", next);
     setInput("");
     if (tdKey.trim()) loadSymbol(s, true, DEFAULT_TIMEFRAME);
-  }, [symbols, tdKey, loadSymbol]);
+    toast.success(`เพิ่ม ${s} เข้า Watchlist แล้ว`);
+  }, [symbols, tdKey, loadSymbol, toast]);
 
   const removeSymbol = useCallback((s) => {
     setSymbols((prev) => {
@@ -364,7 +378,8 @@ export function App() {
       saveStore("us-dash-watchlist", next);
       return next;
     });
-  }, []);
+    toast.success(`ลบ ${s} ออกจาก Watchlist แล้ว`);
+  }, [toast]);
 
   const refreshAll = useCallback(() => {
     if (refreshCooldown > 0) return;
@@ -418,41 +433,63 @@ export function App() {
     setQuota(getQuotaSnapshot());
     // ค่าโควตา (ไม่ลับ) เก็บใน "us-dash-keys" ส่วน API key เข้ารหัสแล้วเก็บแยกใน vault
     saveStore("us-dash-keys", { tdRate: rate, fhRate, tdDaily, fhDaily });
-    saveApiKeys({ td, fh, gemini }).then(setVaultInfo);
+    // ข้อความ toast ของส่วนนี้ตั้งใจให้เป็นข้อความตายตัว ไม่ใส่ค่า key/รายละเอียด error ใด ๆ ลงไป
+    saveApiKeys({ td, fh, gemini })
+      .then((info) => {
+        setVaultInfo(info);
+        if (info.status === "memory") {
+          toast.warning("บันทึกการตั้งค่าแล้ว แต่เบราว์เซอร์นี้เก็บ API Key ลงเครื่องไม่ได้ Key จะอยู่ในหน่วยความจำจนกว่าจะปิดแท็บ");
+        } else {
+          toast.success("บันทึกการตั้งค่า API Key แล้ว");
+        }
+      })
+      .catch(() => toast.error("บันทึก API Key ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"));
   };
 
   // ลบ API key ทั้งหมดออกจากเบราว์เซอร์นี้ (vault + plaintext เก่า) และล้างค่าที่ค้างในหน้าจอ
   const clearAllApiKeys = async () => {
     setTdKey(""); setFhKey(""); setGeminiKey("");
     setTdKeyDraft(""); setFhKeyDraft(""); setGeminiKeyDraft("");
-    setVaultInfo(await clearApiKeys());
+    const info = await clearApiKeys();
+    setVaultInfo(info);
+    if (info.legacyRemains) {
+      toast.warning("ลบ API Key แล้ว แต่ยังมี Key แบบเก่าค้างอยู่ในเบราว์เซอร์นี้ กดลบอีกครั้งเพื่อล้างให้หมด");
+    } else {
+      toast.success("ลบ API Key ทั้งหมดออกจากเบราว์เซอร์นี้แล้ว");
+    }
   };
 
   const exportBackup = () => {
-    // จุดบอดเดิม: Backup เก็บแค่ portfolios/watchlist/keys ทำให้ "ประวัติการทำรายการซื้อขาย"
-    // (ใช้วาดกราฟการเติบโตของพอร์ตย้อนหลังใน PortfolioGrowthChart), เป้าหมายมูลค่าต่อพอร์ต,
-    // และยอดเงินสดที่ตั้งไว้ หายไปทั้งหมดทุกครั้งที่ผู้ใช้ Import Backup ไปเครื่อง/เบราว์เซอร์ใหม่
-    // (แอปจริงเก็บ 3 คีย์นี้ใน localStorage แยกต่างหาก แต่ exportBackup ไม่เคยอ่านมันเลย) —
-    // เพิ่ม 3 คีย์นี้เข้า backup ให้ครบตามที่แอปเก็บจริง
-    const data = {
-      portfolios: JSON.parse(localStorage.getItem("us-dash-portfolios-v3") || "[]"),
-      watchlist: JSON.parse(localStorage.getItem("us-dash-watchlist") || "[]"),
-      // ไฟล์สำรองไม่รวม API key (เป็นไฟล์ plaintext ที่มักถูกส่ง/อัปโหลด/sync ต่อ) — ต้องกรอก key ใหม่หลังนำเข้า
-      // ฟิลด์ชื่อ "keys" ยังคงไว้เพื่อให้ไฟล์สำรองเก่า/ใหม่นำเข้าข้ามรุ่นกันได้ (ตอนนี้มีแต่ค่าโควตา)
-      keys: stripSecrets(JSON.parse(localStorage.getItem("us-dash-keys") || "{}")),
-      txLedger: JSON.parse(localStorage.getItem("us-dash-tx-ledger-v1") || "[]"),
-      portfolioGoals: JSON.parse(localStorage.getItem("us-dash-portfolio-goals-v1") || "{}"),
-      cash: JSON.parse(localStorage.getItem("us-dash-cash-v1") || "{\"amount\":0,\"included\":false}"),
-      version: "3.1.0",
-      exportDate: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `us-stock-terminal-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      // จุดบอดเดิม: Backup เก็บแค่ portfolios/watchlist/keys ทำให้ "ประวัติการทำรายการซื้อขาย"
+      // (ใช้วาดกราฟการเติบโตของพอร์ตย้อนหลังใน PortfolioGrowthChart), เป้าหมายมูลค่าต่อพอร์ต,
+      // และยอดเงินสดที่ตั้งไว้ หายไปทั้งหมดทุกครั้งที่ผู้ใช้ Import Backup ไปเครื่อง/เบราว์เซอร์ใหม่
+      // (แอปจริงเก็บ 3 คีย์นี้ใน localStorage แยกต่างหาก แต่ exportBackup ไม่เคยอ่านมันเลย) —
+      // เพิ่ม 3 คีย์นี้เข้า backup ให้ครบตามที่แอปเก็บจริง
+      const data = {
+        portfolios: JSON.parse(localStorage.getItem("us-dash-portfolios-v3") || "[]"),
+        watchlist: JSON.parse(localStorage.getItem("us-dash-watchlist") || "[]"),
+        // ไฟล์สำรองไม่รวม API key (เป็นไฟล์ plaintext ที่มักถูกส่ง/อัปโหลด/sync ต่อ) — ต้องกรอก key ใหม่หลังนำเข้า
+        // ฟิลด์ชื่อ "keys" ยังคงไว้เพื่อให้ไฟล์สำรองเก่า/ใหม่นำเข้าข้ามรุ่นกันได้ (ตอนนี้มีแต่ค่าโควตา)
+        keys: stripSecrets(JSON.parse(localStorage.getItem("us-dash-keys") || "{}")),
+        txLedger: JSON.parse(localStorage.getItem("us-dash-tx-ledger-v1") || "[]"),
+        portfolioGoals: JSON.parse(localStorage.getItem("us-dash-portfolio-goals-v1") || "{}"),
+        cash: JSON.parse(localStorage.getItem("us-dash-cash-v1") || "{\"amount\":0,\"included\":false}"),
+        version: "3.1.0",
+        exportDate: new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const filename = `us-stock-terminal-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`ส่งออกข้อมูลสำรองแล้ว (${filename})`);
+    } catch (err) {
+      toast.error(`ส่งออกข้อมูลสำรองไม่สำเร็จ: ${err?.message || "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ"}`);
+    }
   };
 
   const importBackup = (e) => {
@@ -500,12 +537,15 @@ export function App() {
           setTdDailyLimit(tdDaily);
           setFhDailyLimit(fhDaily);
         }
-        alert("นำเข้าข้อมูลสำรองสำเร็จเรียบร้อย!");
+        // ต้อง reload เพื่อให้ทุกคอมโพเนนต์อ่านค่าใหม่จาก localStorage — toast ที่แสดงตอนนี้จะหายไปพร้อมหน้า
+        // จึงฝากไว้ให้โผล่หลังโหลดหน้าใหม่แทน
+        toast.showAfterReload("success", "นำเข้าข้อมูลสำรองสำเร็จเรียบร้อย");
         window.location.reload();
       } catch (err) {
-        alert("ไฟล์สำรองไม่ถูกต้อง: " + err.message);
+        toast.error(`ไฟล์สำรองไม่ถูกต้อง: ${err?.message || "อ่านข้อมูลไม่ได้"}`);
       }
     };
+    reader.onerror = () => toast.error("อ่านไฟล์สำรองไม่สำเร็จ กรุณาลองเลือกไฟล์ใหม่");
     reader.readAsText(file);
   };
 

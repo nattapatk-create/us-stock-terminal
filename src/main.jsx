@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { App } from "./App.jsx";
+import { ToastProvider } from "./components/ToastProvider.jsx";
 import { scrubSecretsFromLocation } from "./utils/redact.js";
 import "./index.css";
 
@@ -7,4 +8,8 @@ import "./index.css";
 // ก่อนเริ่มทำงาน กันค้างในประวัติเบราว์เซอร์/ถูกคัดลอกไปแชร์ต่อ
 scrubSecretsFromLocation();
 
-createRoot(document.getElementById("root")).render(<App />);
+createRoot(document.getElementById("root")).render(
+  <ToastProvider>
+    <App />
+  </ToastProvider>
+);
