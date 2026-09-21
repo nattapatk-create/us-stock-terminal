@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { TRENDING_UNIVERSE } from "../data/trendingUniverse.js";
 import { GLOBAL_UNIVERSE_TARGET_SIZE, fetchFundamentals, fetchGlobalStockUniverse, fetchProfile, fetchSeriesBatch, pick } from "../api/priceSeries.js";
 import { loadStore, saveStore } from "../api/quotaEngine.js";
+import { describeApiErrorForLog } from "../api/apiError.js";
 import { NEWS_MIN_COUNT, SCAN_BUFFER, SCAN_CHECKPOINT_KEY, SOCIAL_MIN_MENTIONS, WEEKLY_PICKS_STORE_KEY, WEEKLY_PICK_COUNT, computeInvestorInterest, computeTechnicalSignal, computeTrendScore, fetchCompanyNewsCount7d, fetchSocialSentiment7d, fundScanBatchSize, getCapTier, getFundamentalEligibility, getGrowthSignals, getRiskFlags, getWeeklyRotationOrder, techScanBatchSize } from "../api/recommendationScan.js";
 import { SCAN_OUTPUTSIZE } from "../utils/indicators.js";
 import { DEFAULT_TIMEFRAME } from "../data/appConfig.js";
@@ -189,18 +190,22 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
         const pairs = await Promise.all(
           batchItems.map(async (item) => {
             const sym = item.symbol;
-            try {
-              const [fund, news, social, profile] = await Promise.all([
-                fetchFundamentals(sym, fhKey),
-                fetchCompanyNewsCount7d(sym, fhKey),
-                fetchSocialSentiment7d(sym, fhKey),
-                item.sector ? Promise.resolve(null) : fetchProfile(sym, fhKey),
-              ]);
-              return { item, fund, news, social, profile };
-            } catch (e) {
+            // แต่ละคำขอมี catch ของตัวเอง — เดิมใช้ Promise.all รวมกันแล้วจับ error ทีเดียว ทำให้คำขอเดียว
+            // ที่พลาด (เช่น 429 ของ /stock/metric) ทิ้งผลของคำขออื่นของหุ้นตัวเดียวกันไปหมด (ข่าวที่ดึงสำเร็จ
+            // ก็หายไปด้วย) จนหุ้นเทรนด์อย่าง NVDA ไม่ผ่านเกณฑ์ และ error เงียบหายไม่มี log
+            const safe = (label, promise) => promise.catch((e) => {
               if (e?.isQuotaExhausted) quotaHit = true;
-              return { item, fund: null, news: null, social: null, profile: null };
-            }
+              // social-sentiment เป็น endpoint พรีเมียม แผนฟรีโดน 403 เป็นเรื่องปกติ ไม่ log กันรก
+              if (label !== "social") console.warn(`[Scanner] ${sym} ${label} ล้มเหลว`, describeApiErrorForLog(e));
+              return null;
+            });
+            const [fund, news, social, profile] = await Promise.all([
+              safe("metric", fetchFundamentals(sym, fhKey)),
+              safe("news", fetchCompanyNewsCount7d(sym, fhKey)),
+              safe("social", fetchSocialSentiment7d(sym, fhKey)),
+              item.sector ? Promise.resolve(null) : safe("profile", fetchProfile(sym, fhKey)),
+            ]);
+            return { item, fund, news, social, profile };
           })
         );
 
@@ -226,6 +231,14 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
             break;
           }
         }
+
+        // อัปเดต state ทุกครั้งที่ประมวลผลเสร็จหนึ่งก้อน — เดิมรอให้ลูปจบทั้งพูลก่อนถึงค่อย set
+        // ทำให้ตลอดช่วงสแกน (หลายนาทีบนแผนฟรี) เห็นแต่แถบ "กำลังสแกน" ไม่มีการ์ดขึ้นเลย
+        setEligibilityMap((prev) => ({ ...prev, ...eligResults }));
+        setFundamentalsMap((prev) => ({ ...prev, ...fundResults }));
+        setNewsMap((prev) => ({ ...prev, ...newsResults }));
+        setSocialMap((prev) => ({ ...prev, ...socialResults }));
+        setScanProgress({ done: doneCount, total: rotationPool.length, found: foundCount });
 
         if (quotaHit && foundCount < SCAN_BUFFER) {
           console.warn("[Scanner] พักการสแกน: โควตา Finnhub รายวันหมด — บันทึกจุดพักไว้แล้ว จะสแกนต่อเองในวันถัดไป");
