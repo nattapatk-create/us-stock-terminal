@@ -84,11 +84,27 @@ function ToastItem({ toast, onClose }) {
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const seqRef = useRef(0);
+  // เก็บ timer ของ exit animation แต่ละ toast (คีย์ด้วย id) ไว้เคลียร์ตอน unmount — ToastProvider
+  // อยู่ที่ root ของแอปแทบไม่มีวัน unmount ระหว่างที่ยังมี toast รออยู่จริง ๆ แต่กันไว้เผื่อกรณี
+  // hot-reload ระหว่างพัฒนา หรือถูก re-mount ทั้งต้นไม้ (เช่น ErrorBoundary reset)
+  const exitTimersRef = useRef(new Map());
+  useEffect(() => {
+    return () => {
+      exitTimersRef.current.forEach((t) => clearTimeout(t));
+      exitTimersRef.current.clear();
+    };
+  }, []);
 
   const dismiss = useCallback((id) => {
     // เล่น animation ตอนหายก่อน แล้วค่อยถอดออกจากคิวจริง
     setToasts((prev) => markLeaving(prev, id));
-    setTimeout(() => setToasts((prev) => removeToast(prev, id)), EXIT_ANIMATION_MS);
+    const existing = exitTimersRef.current.get(id);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      exitTimersRef.current.delete(id);
+      setToasts((prev) => removeToast(prev, id));
+    }, EXIT_ANIMATION_MS);
+    exitTimersRef.current.set(id, timer);
   }, []);
 
   const show = useCallback((input) => {

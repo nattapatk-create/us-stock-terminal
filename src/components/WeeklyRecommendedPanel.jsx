@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TRENDING_UNIVERSE } from "../data/trendingUniverse.js";
 import { GLOBAL_UNIVERSE_TARGET_SIZE, fetchFundamentals, fetchGlobalStockUniverse, fetchProfile, fetchSeriesBatch, pick } from "../api/priceSeries.js";
 import { loadStore, saveStore } from "../api/quotaEngine.js";
@@ -42,6 +42,21 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
   // universeReady จะเป็น true (ดู effect ด้านล่าง) เพื่อกันไม่ให้สแกนซ้ำสองรอบด้วยพูลคนละขนาดกัน
   const [globalUniverse, setGlobalUniverse] = useState(null);
   const [universeReady, setUniverseReady] = useState(false);
+
+  // scanRef.token ป้องกันสแกน "ซ้อนกัน" — scanCandidates เป็นงานที่กินเวลานาน (หลายนาทีบน
+  // แผนฟรี ไล่สแกนพูลเป็นพันตัวทีละก้อน) เรียกจาก useEffect ด้านล่างซึ่งมี tdKey/fhKey/
+  // today.weekKey เป็น dependency — ถ้าผู้ใช้เปลี่ยน API key หรือข้ามสัปดาห์ระหว่างที่สแกนรอบ
+  // เก่ายังไม่จบ effect จะยิงสแกนรอบใหม่ทับ ทำให้มีสองรอบสแกนวิ่งพร้อมกันจริง ๆ (คำขอ HTTP
+  // ซ้ำซ้อน โควตาโดนเผาสองเท่า และ state ของรอบเก่าเขียนทับรอบใหม่แบบสุ่มลำดับ) แพตเทิร์นนี้ยืม
+  // มาจาก scanRef ของ SP500HeatmapView — ทุกจุดที่จะ setState ต้องเช็ค isCurrent() ก่อนเสมอ
+  const scanRef = useRef({ token: 0 });
+  // isMountedRef กัน setState หลัง component ถูกถอดออกไปแล้ว (แยกจาก token เพราะ token กันแค่
+  // "สแกนเก่าทับสแกนใหม่" แต่ไม่ได้กันกรณี unmount ระหว่างสแกนพอดี)
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,6 +131,11 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
 
   const scanCandidates = useCallback(async () => {
     if (!fhKey) return; // เกณฑ์บังคับใหม่ (ความสนใจนักลงทุน + ปัจจัยพื้นฐาน) ต้องใช้ Finnhub เป็นหลัก
+    // token ใหม่ทุกครั้งที่เริ่มสแกน — ถ้ามีสแกนรอบก่อนหน้ายังค้างอยู่ (Promise ยังไม่ resolve)
+    // isCurrent() ของรอบเก่าจะเป็น false ทันที ทำให้ setState ที่เหลือของรอบเก่ากลายเป็น no-op
+    // แทนที่จะไปเขียนทับ state ของรอบใหม่ หรือยิง HTTP ต่อโดยไม่มีใครใช้ผลแล้ว
+    const myToken = ++scanRef.current.token;
+    const isCurrent = () => scanRef.current.token === myToken && isMountedRef.current;
     setLoading(true);
     const rotationPool = today.rotation;
 
@@ -124,6 +144,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
       // (เก็บไว้ใน localStorage) — ถ้าเคยแล้ว ให้ใช้ชุดหุ้นเดิมที่ "ล็อก" ไว้ทันที โดยไม่ไล่สแกน
       // พูลทั้งหมดซ้ำอีกเลย (สแกนแค่ครั้งเดียวต่อสัปดาห์จริง ๆ ไม่มีปุ่มให้กดสแกนซ้ำเองแล้ว)
       const locked = await loadStore(WEEKLY_PICKS_STORE_KEY, null);
+      if (!isCurrent()) return;
       if (locked && locked.weekKey === today.weekKey && Array.isArray(locked.symbols) && locked.symbols.length > 0) {
         setScanProgress({ done: locked.symbols.length, total: locked.symbols.length, found: locked.symbols.length });
         const cachedElig = locked.eligibility && typeof locked.eligibility === "object" ? locked.eligibility : {};
@@ -136,6 +157,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
           Promise.all(locked.symbols.map(async (sym) => [sym, await fetchCompanyNewsCount7d(sym, fhKey).catch(() => null)])),
           Promise.all(locked.symbols.map(async (sym) => [sym, await fetchSocialSentiment7d(sym, fhKey).catch(() => null)])),
         ]);
+        if (!isCurrent()) return;
         setFundamentalsMap(Object.fromEntries(fundEntries));
         setNewsMap(Object.fromEntries(newsEntries));
         setSocialMap(Object.fromEntries(socialEntries));
@@ -143,6 +165,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
         // มี Twelve Data API Key ไว้ (ไม่มีก็ยังแสดงการ์ดได้ตามปกติ แค่ไม่มีตัวเลข Vol/4W)
         if (tdKey) {
           const tech = await loadTechnicalSignals(locked.symbols);
+          if (!isCurrent()) return;
           setTechnicalMap((prev) => ({ ...prev, ...tech }));
           await loadSymbolsBatch(locked.symbols, DEFAULT_TIMEFRAME);
         }
@@ -155,6 +178,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
       // มี checkpoint ของสัปดาห์นี้ค้างอยู่ไหม (= วันก่อนสแกนค้างไว้เพราะโควตาหมด) ถ้ามีก็สแกนต่อ
       // จากตำแหน่งเดิม พร้อมหิ้วรายชื่อที่ผ่านเกณฑ์มาแล้วติดมาด้วย ไม่ต้องเริ่มนับหนึ่งใหม่
       const checkpoint = await loadStore(SCAN_CHECKPOINT_KEY, null);
+      if (!isCurrent()) return;
       const resumable = checkpoint && checkpoint.weekKey === today.weekKey && Number.isFinite(checkpoint.cursor);
       let cursor = resumable ? Math.max(0, checkpoint.cursor) : 0;
       let doneCount = resumable ? (checkpoint.done || cursor) : 0;
@@ -182,6 +206,9 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
       const chunkSize = fundScanBatchSize();
       outer:
       for (let i = cursor; i < rotationPool.length; i += chunkSize) {
+        // สแกนรอบนี้ถูกแซงหน้าไปแล้ว (สแกนรอบใหม่เริ่มแล้ว หรือ component ถูกถอดไปแล้ว) — หยุด
+        // ยิง HTTP ก้อนถัดไปทันที ไม่ต้องรอให้ลูปวิ่งจนจบพูลเปล่า ๆ (ตัดคำขอซ้ำซ้อนที่ไม่มีใครใช้)
+        if (!isCurrent()) return;
         if (foundCount >= SCAN_BUFFER) break;
         cursor = i; // ตำแหน่งของก้อนที่กำลังจะยิง — ใช้เป็นจุดกลับมาสแกนต่อถ้าโควตาหมดตรงนี้
 
@@ -234,6 +261,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
 
         // อัปเดต state ทุกครั้งที่ประมวลผลเสร็จหนึ่งก้อน — เดิมรอให้ลูปจบทั้งพูลก่อนถึงค่อย set
         // ทำให้ตลอดช่วงสแกน (หลายนาทีบนแผนฟรี) เห็นแต่แถบ "กำลังสแกน" ไม่มีการ์ดขึ้นเลย
+        if (!isCurrent()) return; // ก้อนนี้ยิง HTTP เสร็จไปแล้วแต่สแกนรอบนี้ถูกแซงหน้าไปแล้วระหว่างรอ
         setEligibilityMap((prev) => ({ ...prev, ...eligResults }));
         setFundamentalsMap((prev) => ({ ...prev, ...fundResults }));
         setNewsMap((prev) => ({ ...prev, ...newsResults }));
@@ -249,6 +277,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
         cursor = i + chunkSize; // ก้อนนี้สำเร็จแล้ว เลื่อนจุดกลับมาสแกนต่อไปข้างหน้า
         setScanProgress({ done: doneCount, total: rotationPool.length, found: foundCount });
       }
+      if (!isCurrent()) return;
       setScanProgress({ done: doneCount, total: rotationPool.length, found: foundCount });
       setEligibilityMap((prev) => ({ ...prev, ...eligResults }));
       setFundamentalsMap((prev) => ({ ...prev, ...fundResults }));
@@ -260,6 +289,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
       // เพื่อแสดงผลบนการ์ด
       if (tdKey && shortlistSymbols.length > 0) {
         const tech = await loadTechnicalSignals(shortlistSymbols);
+        if (!isCurrent()) return;
         setTechnicalMap((prev) => ({ ...prev, ...tech }));
         await loadSymbolsBatch(shortlistSymbols, DEFAULT_TIMEFRAME);
       }
@@ -270,7 +300,7 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
       if (stoppedByQuota) {
         // ยังสแกนไม่จบ — บันทึกเป็น "จุดพัก" ไม่ใช่ผลสุดท้าย เพื่อไม่ให้ชุดหุ้นที่ยังไม่ครบถูก
         // ล็อกค้างไว้ทั้งสัปดาห์ ครั้งหน้าที่เปิดแอป (โควตาวันใหม่) จะสแกนต่อจากตรงนี้เอง
-        setQuotaPaused(true);
+        if (isCurrent()) setQuotaPaused(true);
         await saveStore(SCAN_CHECKPOINT_KEY, {
           weekKey: today.weekKey,
           cursor,
@@ -300,7 +330,8 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
       // สแกนจบสมบูรณ์แล้ว ไม่ต้องเก็บจุดพักไว้อีก
       try { localStorage.removeItem(SCAN_CHECKPOINT_KEY); } catch {}
     } finally {
-      setLoading(false);
+      // ถ้าสแกนรอบนี้ถูกแซงหน้าไปแล้ว รอบใหม่จะเป็นคนคุม setLoading เอง — ไม่ใช่หน้าที่ของรอบเก่า
+      if (isCurrent()) setLoading(false);
     }
   }, [tdKey, fhKey, today, loadSymbolsBatch, loadFundamentalsOnly, loadTechnicalSignals]);
 

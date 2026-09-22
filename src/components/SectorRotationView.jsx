@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PRIORITY, loadStore, saveStore } from "../api/quotaEngine.js";
 import { fetchQuoteBalanced, fetchSeriesBatch } from "../api/priceSeries.js";
 import { SECTOR_ETFS } from "../data/sectorEtfs.js";
@@ -24,6 +24,15 @@ export const SectorRotationView = memo(function SectorRotationView({ tdKey }) {
   const [sortField, setSortField] = useState("score");
   const [sortAsc, setSortAsc] = useState(false);
 
+  // isMountedRef กัน setState ของการสแกน (scanSectors) ที่อาจยังค้างอยู่ตอน component ถูกถอด
+  // ออกไปแล้ว — scanSectors ถูกเรียกได้จากหลายทาง (effect ตอน mount, ปุ่มผู้ใช้กดเอง, ตัวจับเวลา
+  // auto-refresh) จึงคุมง่ายสุดด้วย ref ตัวเดียวแทนที่จะไล่ทำ cancelled flag แยกทุกจุดที่เรียก
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   // สแกนเร็วขึ้น (แก้รอบ 2 — จุดบอดจริงคือ "จำนวนคำขอ" ไม่ใช่แค่การรอซ้อนทับกัน):
   // รอบก่อนหน้าเปลี่ยนจากยิงทีละตัวเรียงลำดับ มาเป็น "ส่งเข้าคิวพร้อมกันทีเดียว" ด้วย Promise.all
   // ซึ่งช่วยตัดเวลาปิ๊งปั๊งเครือข่ายที่ซ้อนทับกันได้จริง แต่คิว tdQueue ก็ยังนับ SPY + 11 sector
@@ -44,6 +53,7 @@ export const SectorRotationView = memo(function SectorRotationView({ tdKey }) {
     try {
       const allSymbols = ["SPY", ...SECTOR_ETFS.map((sec) => sec.symbol)];
       const seriesMap = await fetchSeriesBatch(allSymbols, tdKey, "1week", 70, { priority: PRIORITY.NORMAL });
+      if (!isMountedRef.current) return; // unmount ระหว่างรอ fetch — ทิ้งผลลัพธ์ ไม่ setState ต่อ
       setProgress(100);
 
       const spySeries = seriesMap["SPY"];
@@ -96,13 +106,14 @@ export const SectorRotationView = memo(function SectorRotationView({ tdKey }) {
 
       results.sort((a, b) => b.score - a.score);
       const now = Date.now();
+      if (!isMountedRef.current) return; // unmount ระหว่างรอ fetch — ทิ้งผลลัพธ์ ไม่ setState ต่อ
       setSectorData(results);
       setScannedAt(now);
       saveStore("us-dash-sector-data", { items: results, scannedAt: now });
     } catch (e) {
-      setError(e.message || "เกิดข้อผิดพลาดในการโหลดข้อมูล Sector");
+      if (isMountedRef.current) setError(e.message || "เกิดข้อผิดพลาดในการโหลดข้อมูล Sector");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [tdKey]);
 

@@ -49,6 +49,14 @@ export function App() {
   const [tdCallsToday, setTdCallsToday] = useState(0);
   const [fhCallsToday, setFhCallsToday] = useState(0);
   const cooldownRef = useRef(null);
+  // cooldownRef.current ถูกตั้งเป็น setInterval ใน refreshAll() (ตัว event handler ไม่ใช่
+  // useEffect เอง) จึงไม่มี cleanup อัตโนมัติของ React ให้ — ต้องเคลียร์เองตอน App unmount กัน
+  // interval เดินเรียก setRefreshCooldown ต่อไปเรื่อย ๆ ทั้งที่ component ถูกถอดไปแล้ว
+  useEffect(() => {
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
 
   const [watchlistTrendFilter, setWatchlistTrendFilter] = useState("ALL");
   const [watchlistSearch, setWatchlistSearch] = useState("");

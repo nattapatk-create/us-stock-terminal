@@ -21,6 +21,20 @@ export const SP500HeatmapView = memo(function SP500HeatmapView({ tdKey, fhKey, o
   const [hover, setHover] = useState(null); // { tile, x, y } พิกัดตามเมาส์จริง สำหรับ tooltip ลอย
 
   const scanRef = useRef({ token: 0 });
+  // isMountedRef กัน setState หลัง component ถูกถอดออกไปแล้ว — scanRef.token กันแค่ "ผลสแกนเก่า
+  // มาทับผลใหม่" (สแกนซ้อนกัน) แต่ไม่ได้กันกรณี unmount ระหว่างสแกนอยู่พอดี ต้องมีทั้งสองอย่าง
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+  // เก็บ timeout ของ addedFlash ไว้เคลียร์ตอน unmount / ก่อนตั้งใหม่ทับของเดิม
+  const addedFlashTimerRef = useRef(null);
+  useEffect(() => {
+    return () => {
+      if (addedFlashTimerRef.current) clearTimeout(addedFlashTimerRef.current);
+    };
+  }, []);
 
   const scanHeatmap = useCallback(async () => {
     if ((!tdKey || !tdKey.trim()) && (!fhKey || !fhKey.trim())) {
@@ -35,8 +49,11 @@ export const SP500HeatmapView = memo(function SP500HeatmapView({ tdKey, fhKey, o
 
     const collected = {};
     let done = 0;
+    // isCurrent เช็คทั้ง "ยังเป็นสแกนล่าสุด" (token) และ "component ยังไม่ถูกถอด" (mounted) —
+    // ขาดอย่างใดอย่างหนึ่งไปก็ไม่ควร setState ต่อ (สแกนเก่าทับสแกนใหม่ หรือ setState หลัง unmount)
+    const isCurrent = () => scanRef.current.token === myToken && isMountedRef.current;
     const flush = () => {
-      if (scanRef.current.token !== myToken) return;
+      if (!isCurrent()) return;
       setQuotes({ ...collected });
     };
     const flushTimer = setInterval(flush, 800);
@@ -50,11 +67,11 @@ export const SP500HeatmapView = memo(function SP500HeatmapView({ tdKey, fhKey, o
           // สัญลักษณ์ตัวเดียวพังไม่ควรทำให้การสแกนทั้งก้อนหยุด (ข้ามไปเก็บว่าง)
         } finally {
           done += 1;
-          if (scanRef.current.token === myToken) setProgress({ done, total });
+          if (isCurrent()) setProgress({ done, total });
         }
       }));
 
-      if (scanRef.current.token === myToken) {
+      if (isCurrent()) {
         const now = Date.now();
         flush();
         setScannedAt(now);
@@ -62,7 +79,7 @@ export const SP500HeatmapView = memo(function SP500HeatmapView({ tdKey, fhKey, o
       }
     } finally {
       clearInterval(flushTimer);
-      if (scanRef.current.token === myToken) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [tdKey, fhKey]);
 
@@ -153,7 +170,14 @@ export const SP500HeatmapView = memo(function SP500HeatmapView({ tdKey, fhKey, o
     if (typeof onAdd === "function") {
       onAdd(sym);
       setAddedFlash(sym);
-      setTimeout(() => setAddedFlash((cur) => (cur === sym ? null : cur)), 900);
+      // เคลียร์ timer ของคลิกก่อนหน้าทิ้งก่อนเสมอ กันกรณีคลิกรัว ๆ หลายตัวติดกัน (timer เก่าจะยิง
+      // มาเคลียร์ flash ของ tile ใหม่ที่เพิ่งตั้งไปทับ) และเก็บ id ไว้ให้ effect ข้างบนเคลียร์ตอน
+      // unmount ด้วย กัน setState (setAddedFlash) ยิงหลัง component ถูกถอดไปแล้ว
+      if (addedFlashTimerRef.current) clearTimeout(addedFlashTimerRef.current);
+      addedFlashTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        setAddedFlash((cur) => (cur === sym ? null : cur));
+      }, 900);
     }
   };
 

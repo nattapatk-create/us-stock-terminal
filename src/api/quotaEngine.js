@@ -310,9 +310,13 @@ export async function saveStore(key, value) {
 }
 
 /* ---------------- exchange rate helper (USD -> THB) ---------------- */
-export async function fetchUsdThbRate() {
+// รับ `signal` (จาก AbortController ของผู้เรียก) ได้ — ผู้เรียกที่ยิงตอน mount ผ่าน useEffect
+// (เช่น PortfolioView) จะ abort() ตอน unmount/cleanup เพื่อไม่ให้ setState หลัง component
+// ถูกถอดไปแล้ว (React "state update on unmounted component" warning) และไม่ต้องรอ response
+// ที่ไม่มีใครใช้แล้วให้เสร็จเปล่า ๆ
+export async function fetchUsdThbRate(signal) {
   try {
-    const res = await fetch("https://open.er-api.com/v6/latest/USD");
+    const res = await fetch("https://open.er-api.com/v6/latest/USD", { signal });
     if (!res.ok) throw new Error("rate fetch failed");
     const data = await res.json();
     const rate = data?.rates?.THB;
@@ -321,6 +325,8 @@ export async function fetchUsdThbRate() {
     }
     throw new Error("invalid rate payload");
   } catch (e) {
+    // ถูก abort โดยตั้งใจ (unmount/cleanup) — ไม่ใช่ error จริง ไม่ต้อง log ให้รก console
+    if (e?.name === "AbortError") return null;
     console.error("exchange rate fetch failed", e);
     return null;
   }

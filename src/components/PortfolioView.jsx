@@ -50,10 +50,20 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
   const [portfolioGoals, setPortfolioGoals] = useState({});
   const [portGoalInput, setPortGoalInput] = useState("");
 
-  const refreshExchangeRate = useCallback(async () => {
+  // isMountedRef ป้องกัน setState หลัง component ถูกถอดออกไปแล้ว (เช่นถ้า request ยัง
+  // ค้างอยู่ตอน unmount จริง ๆ — ปกติแท็บต่าง ๆ ของแอปนี้ถูกซ่อนด้วย CSS ไม่ได้ unmount ตอน
+  // สลับแท็บ แต่กันไว้เผื่อกรณี component tree เปลี่ยนจริง เช่น ErrorBoundary reset)
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  const refreshExchangeRate = useCallback(async (signal) => {
     setRateLoading(true);
     setRateError("");
-    const result = await fetchUsdThbRate();
+    const result = await fetchUsdThbRate(signal);
+    if (!isMountedRef.current) return; // unmount ระหว่างรอ fetch — ทิ้งผลลัพธ์ ไม่ setState ต่อ
     if (result) {
       setUsdThbRate(result.rate);
       setRateUpdatedAt(result.updatedAt);
@@ -115,19 +125,27 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
   // ซิงก์ค่าที่แสดงในช่องเป้าหมายรายพอร์ตเมื่อสลับพอร์ต / สลับสกุลเงิน / เรตเปลี่ยน (ย้ายไปไว้หลัง activePort ถูกประกาศ ด้านล่าง)
 
   useEffect(() => {
+    let cancelled = false;
+    // AbortController คุมเฉพาะคำขอเครือข่ายจริง (fetchUsdThbRate) — loadStore อ่านจาก
+    // localStorage ล้วน ๆ ไม่มีอะไรให้ abort แต่ยังเช็ค `cancelled` ก่อน setState ทุกจุดกันไว้
+    const rateAbort = new AbortController();
     (async () => {
       const savedCurrency = await loadStore("us-dash-currency-v1", "USD");
+      if (cancelled) return;
       setDisplayCurrency(savedCurrency === "THB" ? "THB" : "USD");
 
       const savedGoal = await loadStore("us-dash-portfolio-goal-v1", 0);
+      if (cancelled) return;
       const g = Number(savedGoal);
       const goalUsd = Number.isFinite(g) && g > 0 ? g : 0;
       setPortfolioGoal(goalUsd);
 
       const savedPortGoals = await loadStore("us-dash-portfolio-goals-v1", {});
+      if (cancelled) return;
       setPortfolioGoals(savedPortGoals && typeof savedPortGoals === "object" ? savedPortGoals : {});
 
       const cachedRate = await loadStore("us-dash-usdthb-rate-v1", null);
+      if (cancelled) return;
       if (cachedRate?.rate) {
         setUsdThbRate(cachedRate.rate);
         setRateUpdatedAt(cachedRate.updatedAt);
@@ -139,15 +157,22 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
         setGoalInput(goalUsd.toFixed(2));
       }
 
-      refreshExchangeRate();
+      refreshExchangeRate(rateAbort.signal);
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+      rateAbort.abort();
+    };
+  }, [refreshExchangeRate]);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       let ports = await loadStore("us-dash-portfolios-v3", null);
+      if (cancelled) return;
       if (!ports || ports.length === 0) {
         const legacy = await loadStore("us-dash-portfolio-v2", []);
+        if (cancelled) return;
         ports = [
           {
             id: "port-" + Date.now(),
@@ -163,11 +188,13 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
       }
 
       const savedCash = await loadStore("us-dash-cash-v1", { amount: 0, included: false });
+      if (cancelled) return;
       const amt = Number(savedCash?.amount);
       setCashAmount(Number.isFinite(amt) ? amt : 0);
       setCashAmountInput(Number.isFinite(amt) ? String(amt) : "0");
       setCashIncluded(!!savedCash?.included);
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const savePortfolios = (updated) => {
@@ -481,7 +508,10 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
       }
       return loadSymbol(s, true);
     }));
-    setLoadingQuotes(false);
+    // loadSymbol/refreshQuoteOnly เขียนลง dataMap ของ App โดยตรง (ไม่ใช่ state ของคอมโพเนนต์นี้)
+    // จึงไม่มีปัญหา setState หลัง unmount ที่จุดนั้น — แต่ setLoadingQuotes เป็น state ของ
+    // PortfolioView เอง จึงยังต้องเช็ค isMountedRef ก่อนเรียก
+    if (isMountedRef.current) setLoadingQuotes(false);
   }, [portfolios, tdKey, fhKey, dataMap, loadSymbol, refreshQuoteOnly]);
 
   useEffect(() => {
@@ -800,7 +830,7 @@ export const PortfolioView = memo(function PortfolioView({ tdKey, fhKey, geminiK
               </div>
             </div>
             <button
-              onClick={refreshExchangeRate}
+              onClick={() => refreshExchangeRate()}
               disabled={rateLoading}
               className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
               title="รีเฟรชอัตราแลกเปลี่ยน"
