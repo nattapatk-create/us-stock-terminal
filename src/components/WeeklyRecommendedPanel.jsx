@@ -296,6 +296,8 @@ export const WeeklyRecommendedPanel = memo(function WeeklyRecommendedPanel({ tdK
         ...item,
         growth: elig.growth,
         growthRate: elig.growthRate,
+        growthBasisLabel: elig.growthBasisLabel,
+        growthBasisMetric: elig.growthBasisMetric,
         valuation: elig.valuation,
         impliedCAGR: elig.impliedCAGR,
         // จัดอันดับด้วยผลตอบแทนทบต้นโดยประมาณ (Implied CAGR) โดยตรง — เป็นตัวแทนของ Risk-Reward

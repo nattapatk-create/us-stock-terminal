@@ -449,6 +449,20 @@ export function pick(obj, keys) {
   return null;
 }
 
+// เหมือน pick() แต่คืน "ชื่อ field จริงของ Finnhub" ที่ถูกเลือกมาด้วย (ไม่ใช่แค่ค่าตัวเลข)
+// เหตุผล: revenueGrowthTTMYoy (รายปีเทียบรายปี), revenueGrowthQuarterlyYoy (ไตรมาสเดียวเทียบ
+// ไตรมาสเดียวกันปีก่อน), revenueGrowth5Y/3Y (CAGR หลายปี) เป็นคนละฐานเวลากันโดยสิ้นเชิง เอามา
+// ต่อคิว fallback แล้วโชว์ปนกันเป็นเลขเดียวโดยไม่บอกที่มา จะทำให้ตัวเลขที่เห็นเทียบกับแหล่งอื่น
+// (ที่มักโชว์เฉพาะ TTM YoY รายปี) ไม่ตรงกัน ทั้งที่ตัวเลขแต่ละตัวเป็นข้อมูลจริงจาก Finnhub — ปัญหา
+// อยู่ที่ "ไม่บอกฐานเวลา" ไม่ใช่ตัวเลขผิด จึงต้องคืน label ติดไปด้วยเพื่อโชว์ให้ผู้ใช้ตรวจสอบย้อนกลับได้
+export function pickWithLabel(obj, keysWithLabels) {
+  if (!obj) return { value: null, label: null, field: null };
+  for (const [k, label] of keysWithLabels) {
+    if (obj[k] != null && !Number.isNaN(obj[k])) return { value: obj[k], label, field: k };
+  }
+  return { value: null, label: null, field: null };
+}
+
 /* ---------------- Global stock universe fetch (Twelve Data /stocks) ---------------- */
 // ขนาดพูลหุ้นทั่วโลกสูงสุด (รวม TRENDING_UNIVERSE แล้ว) — เดิมตั้งไว้ 3,000 ตัว ซึ่ง "สแกนจบไม่ได้
 // จริง" บนแผนฟรีของ Twelve Data: 1 สัญลักษณ์ = 1 credit และแผนฟรีมี 800 credit/วัน จึงต้องใช้

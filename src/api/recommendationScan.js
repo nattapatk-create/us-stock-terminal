@@ -1,5 +1,5 @@
 import { fhQueue } from "./quotaEngine.js";
-import { pick } from "./priceSeries.js";
+import { pick, pickWithLabel } from "./priceSeries.js";
 import { TRENDING_UNIVERSE } from "../data/trendingUniverse.js";
 
 // 2. Pool = TRENDING_UNIVERSE ที่คัดสรรไว้ล่วงหน้า รวมกับหุ้นทั่วโลกจาก Twelve Data (ดูหัวข้อ
@@ -71,33 +71,64 @@ export const GROWTH_RATE_CAP_PCT = 200;      // เพดานกันอั�
 export const RERATING_CAP_MULTIPLE = 5;      // เพดานกันตัวคูณ re-rating ระเบิดเมื่อ valuation ratio ใกล้ 0 (ข้อมูลผิดปกติ/หุ้นแทบไม่มีมูลค่า)
 
 // ดึงตัวเลขแนวโน้มพื้นฐาน (การเติบโตของรายได้/กำไร + P/E + P/S) จาก object metric ของ Finnhub —
-// ใช้ pick() ลองหลายชื่อฟิลด์เผื่อ Finnhub เปลี่ยนชื่อฟิลด์หรือบางสัญลักษณ์ไม่มีบางฟิลด์
+// เดิมใช้ pick() ไล่ fallback ข้าม "ฐานเวลา" ที่ไม่เทียบเท่ากัน (TTM YoY รายปี → Quarterly YoY
+// รายไตรมาสเดียว → 5Y/3Y CAGR หลายปี) แล้วโชว์เป็นเลขเดียวโดยไม่บอกที่มา ทำให้ตัวเลขที่เห็นบนการ์ด
+// เทียบกับ TTM YoY รายปีที่แหล่งอื่น (เช่นหน้า Finnhub/ตลาดหลักทรัพย์เอง) โชว์กันไม่ตรง ทั้งที่แต่
+// ละตัวเป็นข้อมูลจริงจาก Finnhub — แก้โดยคืน label field จริงที่ถูกเลือกมาด้วย (pickWithLabel)
+// เพื่อให้ตรวจสอบย้อนกลับกับแหล่งข้อมูลจริงได้ตรง field ตรงฐานเวลา ไม่ใช่เดาว่าใช่ตัวไหน
+const REVENUE_GROWTH_FIELDS = [
+  ["revenueGrowthTTMYoy", "TTM YoY"],
+  ["revenueGrowthQuarterlyYoy", "รายไตรมาสล่าสุด YoY"],
+  ["revenueGrowth5Y", "CAGR 5 ปี"],
+  ["revenueGrowth3Y", "CAGR 3 ปี"],
+];
+const EPS_GROWTH_FIELDS = [
+  ["epsGrowthTTMYoy", "TTM YoY"],
+  ["epsGrowthQuarterlyYoy", "รายไตรมาสล่าสุด YoY"],
+  ["epsGrowth5Y", "CAGR 5 ปี"],
+  ["epsGrowth3Y", "CAGR 3 ปี"],
+];
+
 export function getGrowthSignals(fundamentals) {
-  if (!fundamentals) return { revenueGrowth: null, epsGrowth: null, peTTM: null, psTTM: null };
-  const revenueGrowth = pick(fundamentals, [
-    "revenueGrowthTTMYoy", "revenueGrowthQuarterlyYoy", "revenueGrowth5Y", "revenueGrowth3Y",
-  ]);
-  const epsGrowth = pick(fundamentals, [
-    "epsGrowthTTMYoy", "epsGrowthQuarterlyYoy", "epsGrowth5Y", "epsGrowth3Y",
-  ]);
+  if (!fundamentals) {
+    return { revenueGrowth: null, revenueGrowthLabel: null, revenueGrowthField: null,
+      epsGrowth: null, epsGrowthLabel: null, epsGrowthField: null, peTTM: null, psTTM: null };
+  }
+  const rev = pickWithLabel(fundamentals, REVENUE_GROWTH_FIELDS);
+  const eps = pickWithLabel(fundamentals, EPS_GROWTH_FIELDS);
   const peTTM = pick(fundamentals, [
     "peTTM", "peBasicExclExtraTTM", "peExclExtraTTM", "peInclExtraTTM", "peNormalizedAnnual",
   ]);
   const psTTM = pick(fundamentals, ["psTTM", "psAnnual"]);
-  return { revenueGrowth, epsGrowth, peTTM, psTTM };
+  return {
+    revenueGrowth: rev.value, revenueGrowthLabel: rev.label, revenueGrowthField: rev.field,
+    epsGrowth: eps.value, epsGrowthLabel: eps.label, epsGrowthField: eps.field,
+    peTTM, psTTM,
+  };
 }
 
 // เกณฑ์บังคับข้อ 1 — เอาอัตราเติบโตที่ "สูงที่สุด" จากรายได้หรือกำไร (อย่างใดอย่างหนึ่งที่มีข้อมูล
 // จริง) มาเป็นตัวแทนความเป็น Disruptive Growth ของบริษัท — ถ้าไม่มีข้อมูลทั้งคู่เลยถือว่าข้อมูล
 // ไม่พอ (คืนค่า null แล้วจะไม่ผ่านเกณฑ์โดยอัตโนมัติ ไม่เดาสุ่มว่าโตหรือไม่โต)
+// สำคัญ: ถ้าตัวเลขที่ "สูงที่สุด" มาจากฐานเวลาที่ไม่ใช่ TTM YoY (เช่นหล่นไปใช้รายไตรมาสเดียว)
+// จะติด label กำกับมาด้วยเสมอ (ดู basisLabel) เพื่อให้ผู้ใช้เห็นตรง ๆ ว่ากำลังเทียบอะไรกับอะไร
 export function getGrowthRate(growth) {
-  const candidates = [growth?.revenueGrowth, growth?.epsGrowth].filter((v) => v != null && !Number.isNaN(v));
+  const candidates = [
+    { value: growth?.revenueGrowth, label: growth?.revenueGrowthLabel, metric: "รายได้" },
+    { value: growth?.epsGrowth, label: growth?.epsGrowthLabel, metric: "กำไรต่อหุ้น" },
+  ].filter((c) => c.value != null && !Number.isNaN(c.value));
   if (candidates.length === 0) return null;
-  return Math.max(...candidates);
+  return candidates.reduce((a, b) => (b.value > a.value ? b : a));
 }
 export function getGrowthEligibility(growth) {
-  const growthRate = getGrowthRate(growth);
-  return { growthRate, eligible: growthRate != null && growthRate >= MIN_DISRUPTIVE_GROWTH_PCT };
+  const picked = getGrowthRate(growth);
+  const growthRate = picked?.value ?? null;
+  return {
+    growthRate,
+    growthBasisLabel: picked?.label ?? null,
+    growthBasisMetric: picked?.metric ?? null,
+    eligible: growthRate != null && growthRate >= MIN_DISRUPTIVE_GROWTH_PCT,
+  };
 }
 
 // เกณฑ์บังคับข้อ 2 — คำนวณ PEG (มีกำไรแล้ว) หรือ PSG (ยังไม่มีกำไร ใช้ P/S แทน) ตามที่มีข้อมูลจริง
@@ -145,6 +176,8 @@ export function getHypergrowthEligibility(fundamentals) {
   const rewardEligible = impliedCAGR != null && impliedCAGR >= MIN_TARGET_CAGR_PCT;
   return {
     growth, growthRate: growthElig.growthRate, valuation, impliedCAGR,
+    growthBasisLabel: growthElig.growthBasisLabel,
+    growthBasisMetric: growthElig.growthBasisMetric,
     growthEligible: growthElig.eligible,
     valuationEligible: valuation.eligible,
     rewardEligible,

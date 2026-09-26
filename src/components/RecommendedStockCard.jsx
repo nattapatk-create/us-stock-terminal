@@ -40,10 +40,10 @@ export function RecommendedStockCard({ rec, idx, alreadyAdded, onAdd }) {
         <div className="mb-2 flex flex-wrap gap-1">
           {rec.growthRate != null && (
             <span
-              title="อัตราเติบโตของรายได้หรือกำไร (สูงสุดที่มีข้อมูลจริง) — เกณฑ์บังคับข้อ 1 Disruptive Growth"
+              title={`เติบโตของ${rec.growthBasisMetric ?? "รายได้/กำไร"} ฐาน ${rec.growthBasisLabel ?? "ไม่ทราบช่วงเวลา"} จาก Finnhub — เกณฑ์บังคับข้อ 1 Disruptive Growth${rec.growthBasisLabel && rec.growthBasisLabel !== "TTM YoY" ? " (ไม่ใช่ TTM รายปี เทียบกับแหล่งอื่นอาจไม่ตรงฐานเวลา)" : ""}`}
               className="text-[9px] font-bold px-1.5 py-0.5 rounded border text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
             >
-              📈 โต {fmtPct(rec.growthRate)}
+              📈 โต {fmtPct(rec.growthRate)}{rec.growthBasisLabel ? ` (${rec.growthBasisLabel})` : ""}
             </span>
           )}
           {rec.valuation?.ratio != null && (
