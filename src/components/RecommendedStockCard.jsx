@@ -40,18 +40,18 @@ export function RecommendedStockCard({ rec, idx, alreadyAdded, onAdd }) {
         <div className="mb-2 flex flex-wrap gap-1">
           {rec.growthRate != null && (
             <span
-              title={`เติบโตของ${rec.growthBasisMetric ?? "รายได้/กำไร"} ฐาน ${rec.growthBasisLabel ?? "ไม่ทราบช่วงเวลา"} จาก Finnhub — เกณฑ์บังคับข้อ 1 Disruptive Growth${rec.growthBasisLabel && rec.growthBasisLabel !== "TTM YoY" ? " (ไม่ใช่ TTM รายปี เทียบกับแหล่งอื่นอาจไม่ตรงฐานเวลา)" : ""}`}
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded border text-emerald-300 bg-emerald-500/10 border-emerald-500/30"
+              title={`เติบโตของ${rec.growthBasisMetric ?? "รายได้"} ฐาน ${rec.growthBasisLabel ?? "ไม่ทราบช่วงเวลา"} จาก Finnhub — เกณฑ์บังคับข้อ 1 Disruptive Growth${rec.growthIsEpsFallback ? " ⚠️ ไม่มีข้อมูลรายได้ ใช้ EPS growth แทน อาจผันผวนจากรายการพิเศษ (ขาย/ตัดด้อยค่าสินทรัพย์/ภาษี) ไม่สะท้อนการเติบโตจริงของธุรกิจเสมอไป" : ""}${!rec.growthIsEpsFallback && rec.growthBasisLabel && rec.growthBasisLabel !== "TTM YoY" ? " (ไม่ใช่ TTM รายปี เทียบกับแหล่งอื่นอาจไม่ตรงฐานเวลา)" : ""}`}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${rec.growthIsEpsFallback ? "text-orange-300 bg-orange-500/10 border-orange-500/30" : "text-emerald-300 bg-emerald-500/10 border-emerald-500/30"}`}
             >
-              📈 โต {fmtPct(rec.growthRate)}{rec.growthBasisLabel ? ` (${rec.growthBasisLabel})` : ""}
+              {rec.growthIsEpsFallback ? "⚠️" : "📈"} โต {fmtPct(rec.growthRate)}{rec.growthBasisLabel ? ` (${rec.growthBasisLabel}${rec.growthIsEpsFallback ? " EPS" : ""})` : ""}
             </span>
           )}
           {rec.valuation?.ratio != null && (
             <span
-              title={`${rec.valuation.method} = ราคาที่จ่ายต่อการเติบโต 1% — เกณฑ์บังคับข้อ 2 Margin of Safety`}
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded border text-sky-300 bg-sky-500/10 border-sky-500/30"
+              title={`${rec.valuation.method} = ราคาที่จ่ายต่อการเติบโต 1% — เกณฑ์บังคับข้อ 2 Margin of Safety${rec.valuation.isEpsFallback ? " ⚠️ ไม่มีข้อมูลรายได้ ใช้ P/E ÷ EPS growth แทน อาจผันผวนจากรายการพิเศษ" : ""}`}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${rec.valuation.isEpsFallback ? "text-orange-300 bg-orange-500/10 border-orange-500/30" : "text-sky-300 bg-sky-500/10 border-sky-500/30"}`}
             >
-              {rec.valuation.method} {rec.valuation.ratio.toFixed(2)}x
+              {rec.valuation.isEpsFallback ? "⚠️ " : ""}{rec.valuation.method} {rec.valuation.ratio.toFixed(2)}x
             </span>
           )}
           {rec.impliedCAGR != null && (

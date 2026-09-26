@@ -107,18 +107,22 @@ export function getGrowthSignals(fundamentals) {
   };
 }
 
-// เกณฑ์บังคับข้อ 1 — เอาอัตราเติบโตที่ "สูงที่สุด" จากรายได้หรือกำไร (อย่างใดอย่างหนึ่งที่มีข้อมูล
-// จริง) มาเป็นตัวแทนความเป็น Disruptive Growth ของบริษัท — ถ้าไม่มีข้อมูลทั้งคู่เลยถือว่าข้อมูล
-// ไม่พอ (คืนค่า null แล้วจะไม่ผ่านเกณฑ์โดยอัตโนมัติ ไม่เดาสุ่มว่าโตหรือไม่โต)
-// สำคัญ: ถ้าตัวเลขที่ "สูงที่สุด" มาจากฐานเวลาที่ไม่ใช่ TTM YoY (เช่นหล่นไปใช้รายไตรมาสเดียว)
-// จะติด label กำกับมาด้วยเสมอ (ดู basisLabel) เพื่อให้ผู้ใช้เห็นตรง ๆ ว่ากำลังเทียบอะไรกับอะไร
+// เกณฑ์บังคับข้อ 1 — ใช้ "อัตราเติบโตของรายได้" เป็นหลักเสมอ (ไม่ใช่เอาค่าสูงสุดระหว่างรายได้กับ
+// EPS แบบเดิม) เพราะ EPS แบบ GAAP ถูกรายการพิเศษบิดเบือนได้ง่ายมาก (ขาย/ปิดธุรกิจ, ตัดด้อยค่า,
+// ปรับภาษี, buyback ที่เปลี่ยนจำนวนหุ้น) — แค่ปีฐานมี EPS ต่ำผิดปกติครั้งเดียว ปีถัดมาก็เด้งเป็น
+// หลักร้อย % ได้ทันทีโดยธุรกิจจริงไม่ได้โตขนาดนั้น (ตรวจสอบแล้วกับผลประกอบการจริงของ BILI/HON
+// พบว่า EPS growth ที่ Finnhub รายงานสูงกว่ารายได้จริงหลายเท่าตัวจากสาเหตุนี้) รายได้จึงเป็น
+// ตัวแทน "Disruptive Growth" ที่น่าเชื่อถือกว่ามาก เพราะโดนรายการพิเศษกระทบยากกว่า
+// ใช้ EPS growth เป็นตัวสำรองเฉพาะเมื่อ "ไม่มีข้อมูลรายได้เลยจริง ๆ" เท่านั้น และจะติด
+// warning label กำกับเสมอว่ากำลังใช้ EPS แทนอยู่ เพื่อให้ผู้ใช้ระแวดระวังความผันผวนจากรายการพิเศษ
 export function getGrowthRate(growth) {
-  const candidates = [
-    { value: growth?.revenueGrowth, label: growth?.revenueGrowthLabel, metric: "รายได้" },
-    { value: growth?.epsGrowth, label: growth?.epsGrowthLabel, metric: "กำไรต่อหุ้น" },
-  ].filter((c) => c.value != null && !Number.isNaN(c.value));
-  if (candidates.length === 0) return null;
-  return candidates.reduce((a, b) => (b.value > a.value ? b : a));
+  if (growth?.revenueGrowth != null && !Number.isNaN(growth.revenueGrowth)) {
+    return { value: growth.revenueGrowth, label: growth.revenueGrowthLabel, metric: "รายได้", isEpsFallback: false };
+  }
+  if (growth?.epsGrowth != null && !Number.isNaN(growth.epsGrowth)) {
+    return { value: growth.epsGrowth, label: growth.epsGrowthLabel, metric: "กำไรต่อหุ้น", isEpsFallback: true };
+  }
+  return null;
 }
 export function getGrowthEligibility(growth) {
   const picked = getGrowthRate(growth);
@@ -127,6 +131,7 @@ export function getGrowthEligibility(growth) {
     growthRate,
     growthBasisLabel: picked?.label ?? null,
     growthBasisMetric: picked?.metric ?? null,
+    growthIsEpsFallback: picked?.isEpsFallback ?? false,
     eligible: growthRate != null && growthRate >= MIN_DISRUPTIVE_GROWTH_PCT,
   };
 }
@@ -134,19 +139,25 @@ export function getGrowthEligibility(growth) {
 // เกณฑ์บังคับข้อ 2 — คำนวณ PEG (มีกำไรแล้ว) หรือ PSG (ยังไม่มีกำไร ใช้ P/S แทน) ตามที่มีข้อมูลจริง
 // ยิ่งอัตราส่วนต่ำ ยิ่งจ่ายน้อยต่อการเติบโต 1% = ยิ่งมี Margin of Safety สูง (marginOfSafetyPct
 // เทียบกับ FAIR_VALUE_RATIO ให้เห็นเป็น % ตรง ๆ บนการ์ด)
+// เกณฑ์บังคับข้อ 2 — คำนวณ PSG (P/S ÷ Revenue Growth%) เป็นหลักเสมอ เพราะรายได้เป็นตัวเลขที่
+// รายการพิเศษบิดเบือนได้ยากกว่า EPS มาก (เหตุผลเดียวกับ getGrowthRate ด้านบน) ใช้ PEG (P/E ÷ EPS
+// Growth%) เป็นตัวสำรองเฉพาะเมื่อ "ไม่มีข้อมูลรายได้ที่ใช้คำนวณ PSG ได้จริง ๆ" เท่านั้น (สลับจาก
+// เดิมที่เอา PEG ก่อนเสมอถ้ามีกำไรแล้ว — ตรวจสอบกับผลประกอบการจริงพบว่า PEG ที่คำนวณจาก EPS
+// growth ที่บิดเบี้ยวจากรายการพิเศษ ทำให้ margin of safety สูงผิดปกติหลายพัน % ทั้งที่หุ้นไม่ได้
+// ถูกขนาดนั้นจริง)
 export function getValuationSignals(growth) {
   const { revenueGrowth, epsGrowth, peTTM, psTTM } = growth || {};
   let ratio = null;
   let method = null;
-  if (epsGrowth != null && epsGrowth > 0 && peTTM != null && peTTM > 0) {
-    ratio = peTTM / epsGrowth;
-    method = "PEG";
-  } else if (revenueGrowth != null && revenueGrowth > 0 && psTTM != null && psTTM > 0) {
+  if (revenueGrowth != null && revenueGrowth > 0 && psTTM != null && psTTM > 0) {
     ratio = psTTM / revenueGrowth;
     method = "PSG";
+  } else if (epsGrowth != null && epsGrowth > 0 && peTTM != null && peTTM > 0) {
+    ratio = peTTM / epsGrowth;
+    method = "PEG";
   }
   const marginOfSafetyPct = ratio != null ? (FAIR_VALUE_RATIO / ratio - 1) * 100 : null;
-  return { ratio, method, marginOfSafetyPct };
+  return { ratio, method, marginOfSafetyPct, isEpsFallback: method === "PEG" };
 }
 export function getValuationEligibility(valuation) {
   return { ...valuation, eligible: valuation.ratio != null && valuation.ratio <= MAX_VALUATION_RATIO };
@@ -178,6 +189,7 @@ export function getHypergrowthEligibility(fundamentals) {
     growth, growthRate: growthElig.growthRate, valuation, impliedCAGR,
     growthBasisLabel: growthElig.growthBasisLabel,
     growthBasisMetric: growthElig.growthBasisMetric,
+    growthIsEpsFallback: growthElig.growthIsEpsFallback,
     growthEligible: growthElig.eligible,
     valuationEligible: valuation.eligible,
     rewardEligible,
