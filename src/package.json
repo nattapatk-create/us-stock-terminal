@@ -1,0 +1,26 @@
+{
+  "name": "us-stock-terminal",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:keys": "node tests/key-vault.test.mjs",
+    "test:errors": "node --experimental-loader ./tests/jsx-stub-loader.mjs tests/error-handling.test.mjs",
+    "test:toast": "node tests/toast.test.mjs"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "2.15.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "autoprefixer": "10.6.1",
+    "postcss": "8.5.28",
+    "tailwindcss": "3.4.19",
+    "vite": "8.3.0"
+  }
+}
